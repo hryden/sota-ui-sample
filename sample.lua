@@ -1,7 +1,7 @@
-local ScriptName = "Sample";
+local ScriptName = "SUIS";
 local Version = "0.1";
 local CreatorName = "Denys";
-local Description = "..."
+local Description = "SOTA Sample UI"
 
 -------------------------------------------
 ---- UI
