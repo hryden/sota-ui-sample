@@ -44,6 +44,7 @@ local ui_color = {
     Black = "#000000",
     White = "#ffffff",
     Buff = "#DAA06D",
+    Gray = "#303030",
     DarkGray = "#101010",
     DimGray = "#696969",
     Onyx = "#353935",
@@ -56,6 +57,7 @@ local ui_color = {
 
 ---@enum ui_symbol
 local ui_symbol = {
+    Menu = "\u{2630}",
     CheckOn = "\u{2611}",
     CheckOff = "\u{2610}",
     Close = "\u{2715}",
@@ -460,6 +462,8 @@ function Signal()
     local self = {}
 
     local action_ = {}
+    local callback_
+    local keep_callback_ = false
 
     ---@param callable function
     ---@return string -- Action ID
@@ -476,9 +480,36 @@ function Signal()
         return id
     end
 
+    ---@param callable function
+    ---@param keep? boolean
+    function self.callback(callable, keep)
+        callback_ = callable
+        if keep then
+            keep_callback_ = true
+        end
+    end
+
     function self.emit(...)
+        if callback_ then
+            callback_()
+            if not keep_callback_ then
+                callback_ = nil
+            end
+            return
+        end
+
         for _, action in ipairs(action_) do
             if action.callable(...) then
+                break
+            end
+        end
+    end
+
+    ---@param id string
+    function self.remove_action(id)
+        for i, a in ipairs(action_) do
+            if id == a.id then
+                table.remove(action_, i)
                 break
             end
         end
@@ -548,8 +579,8 @@ end
 
 local on_mouse_entered = Event()
 local on_mouse_exited = Event()
-local on_mouse_pressed = Event()
-local on_mouse_released = Event()
+local on_mouse_pressed = Signal()
+local on_mouse_released = Signal()
 local on_mouse_dragging = Signal()
 
 local on_key_pressed = Event()
@@ -613,6 +644,7 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     self.on_hovered = Signal()
     self.on_pressed = Signal()
     self.on_toggled = Signal()
+    self.on_dragging = Signal()
 
     self.on_size_changed = Signal()
     self.on_visibility_changed = Signal()
@@ -794,7 +826,9 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     function self.set_resize_dir(value)
         if value ~= resize_dir_ then
             resize_dir_ = value
-            -- self.on_size_changed.emit(size_x_, size_y_)
+            if parent_ then
+                parent_.on_child_order_changed.emit()
+            end
         end
     end
 
@@ -877,7 +911,6 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     local on_mouse_entered_action_id
     local on_mouse_exited_action_id
     local on_mouse_pressed_action_id
-    local on_mouse_released_action_id
 
     ---@param value boolean
     function self.set_mouse_filter(value)
@@ -892,14 +925,15 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
 
             on_mouse_pressed_action_id = on_mouse_pressed.action(function()
                 if self.is_hovered() then
-                    self.on_pressed.emit(true)
-                    return true
-                end
-            end)
+                    on_mouse_released.callback(function()
+                        self.on_pressed.emit(false)
+                    end)
 
-            on_mouse_released_action_id = on_mouse_released.action(function()
-                if self.is_pressed() then
-                    self.on_pressed.emit(false)
+                    on_mouse_dragging.callback(function()
+                        self.on_dragging.emit()
+                    end, true)
+
+                    self.on_pressed.emit(true)
                     return true
                 end
             end)
@@ -909,7 +943,6 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
             on_mouse_entered.remove_action(on_mouse_entered_action_id)
             on_mouse_exited.remove_action(on_mouse_exited_action_id)
             on_mouse_pressed.remove_action(on_mouse_pressed_action_id)
-            on_mouse_released.remove_action(on_mouse_released_action_id)
 
             mouse_filter_ = false
         end
@@ -1363,7 +1396,6 @@ function Window(pos_x, pos_y, size_x, size_y, title)
     local close_ = Button(0, 0, 32, 24, ui_symbol.Close, 10, header_)
     local title_ = Label(40, 0, 200, 24, title, 12, header_)
 
-    self.on_dragging = Signal()
     self.on_resizing = Signal()
     self.on_close = Signal()
 
@@ -1384,20 +1416,24 @@ function Window(pos_x, pos_y, size_x, size_y, title)
         end
     end
 
-    on_mouse_dragging.action(function()
-        if header_.is_pressed() then
-            local x, y = self.get_position()
-            self.set_position(
-                x + (mouse_x_spd * mouse_x_dir),
-                y + (mouse_y_spd * mouse_y_dir)
-            )
-            return true
-        end
+    header_.on_dragging.action(function()
+        -- if header_.is_pressed() then
+        local x, y = self.get_position()
+        self.set_position(
+            x + (mouse_x_spd * mouse_x_dir),
+            y + (mouse_y_spd * mouse_y_dir)
+        )
+        --     return true
+        -- end
     end)
 
     close_.on_pressed.action(function(pressed)
-        self.set_visible(false)
-        self.on_close.emit()
+        if pressed then
+            self.set_visible(false)
+            self.on_close.emit()
+        else
+            close_.on_hovered.emit(false)
+        end
     end)
 
     local color = ui_color.DarkGray
@@ -1449,7 +1485,9 @@ function Button(pos_x, pos_y, size_x, size_y, text_value, font_size, parent_node
         label_.set_size(self.get_size())
     end)
 
-    self.set_normal_color(ui_color.DarkGray)
+    self.set_normal_color(ui_color.None)
+    self.set_hovered_color(ui_color.Gray)
+    self.set_pressed_color(ui_color.None)
     self.set_text_align(ui_anchor.MiddleCenter)
     self.set_mouse_filter(true)
     return self
@@ -1554,19 +1592,16 @@ function ScrollBar(width, horizontal, parent_node)
         self.on_value_changed.emit(value)
     end
 
-    on_mouse_dragging.action(function()
-        if grabber_.is_pressed() then
-            local max = self.get_size_y() - grabber_.get_size_y()
-            local pos = grabber_.get_pos_y() + mouse_y_spd * mouse_y_dir
-            if pos >= 0 and pos <= max then
-                grabber_.set_pos_y(pos)
-                if max == 0 then
-                    max = 1
-                end
-                value_ = pos / max
-                self.on_value_changed.emit(value_)
+    grabber_.on_dragging.action(function()
+        local max = self.get_size_y() - grabber_.get_size_y()
+        local pos = grabber_.get_pos_y() + mouse_y_spd * mouse_y_dir
+        if pos >= 0 and pos <= max then
+            grabber_.set_pos_y(pos)
+            if max == 0 then
+                max = 1
             end
-            return true
+            value_ = pos / max
+            self.on_value_changed.emit(value_)
         end
     end)
 
@@ -1756,6 +1791,139 @@ function Player()
     ---@class Player
     local self = {}
 
+    local nickname_ = ""
+    local combat_mode_ = false
+
+    local adventurer_xp_ = 0
+    local adventurer_xp_lvl_ = 0
+    local adventurer_xp_att_ = false
+    local adventurer_xp_pooled_ = 0
+    local adventurer_xp_stored_ = 0
+    local adventurer_xp_progress_ = 0
+
+    local producer_xp_ = 0
+    local producer_xp_lvl_ = 0
+    local producer_xp_att_ = false
+    local producer_xp_pooled_ = 0
+    local producer_xp_stored_ = 0
+    local producer_xp_progress_ = 0
+
+    local relogin_ = true
+
+    local xp_ = { 0 }
+    do -- floor(previous_level_exp * 1.1 + 1000)
+        local xp = 0
+        for _ = 2, 200, 1 do
+            xp = math.floor(xp * 1.1 + 1000)
+            table.insert(xp_, xp)
+        end
+    end
+
+    local progress_xp_ = function(xp, lvl)
+        return (xp - xp_[lvl]) / (xp_[lvl + 1] - xp_[lvl])
+    end
+
+    local update_xp_ = function()
+        adventurer_xp_ = get_adventurer_total_xp()
+        adventurer_xp_att_ = get_adventurer_attenuation_status()
+        adventurer_xp_pooled_ = get_adventurer_pooled_xp()
+
+        producer_xp_ = get_producer_total_xp()
+        producer_xp_att_ = get_producer_attenuation_status()
+        producer_xp_pooled_ = get_producer_pooled_xp()
+
+        if (adventurer_xp_lvl_ + producer_xp_lvl_) > 1 then
+            adventurer_xp_progress_ = progress_xp_(adventurer_xp_, adventurer_xp_lvl_)
+            producer_xp_progress_ = progress_xp_(producer_xp_, producer_xp_lvl_)
+
+            if adventurer_xp_progress_ >= 1 then
+                adventurer_xp_lvl_ = adventurer_xp_lvl_ + 1
+                adventurer_xp_progress_ = progress_xp_(adventurer_xp_, adventurer_xp_lvl_)
+            end
+
+            if producer_xp_progress_ >= 1 then
+                producer_xp_lvl_ = producer_xp_lvl_ + 1
+                producer_xp_progress_ = progress_xp_(producer_xp_, producer_xp_lvl_)
+            end
+        end
+    end
+
+    local store_xp_ = function()
+        adventurer_xp_stored_ = adventurer_xp_
+        producer_xp_stored_ = producer_xp_
+    end
+
+    function self.adventurer_xp() return adventurer_xp_ end
+
+    function self.adventurer_xp_att() return adventurer_xp_att_ end
+
+    function self.adventurer_xp_pooled() return adventurer_xp_pooled_ end
+
+    function self.adventurer_xp_gained()
+        local n = adventurer_xp_ - adventurer_xp_stored_
+        if n > 0 then
+            return n
+        end
+        return adventurer_xp_
+    end
+
+    function self.adventurer_xp_progress() return adventurer_xp_progress_ end
+
+    function self.adventurer_level() return adventurer_xp_lvl_ end
+
+    function self.producer_xp() return producer_xp_ end
+
+    function self.producer_xp_att() return producer_xp_att_ end
+
+    function self.producer_xp_pooled() return producer_xp_pooled_ end
+
+    function self.producer_xp_gained()
+        local n = producer_xp_ - producer_xp_stored_
+        if n > 0 then
+            return n
+        end
+        return producer_xp_
+    end
+
+    function self.producer_xp_progress() return producer_xp_progress_ end
+
+    function self.producer_level() return producer_xp_lvl_ end
+
+    function self.reset_xp()
+        update_xp_()
+        store_xp_()
+    end
+
+    on_redraw.action(function()
+        combat_mode_ = get_player_combat_mode()
+        update_xp_()
+    end, 1)
+
+    on_scene_loaded.action(function(_)
+        local name = get_player_name()
+        if name ~= nickname_ then
+            print("Hello " .. name)
+            update_xp_()
+            nickname_ = name
+            producer_xp_lvl_ = 0
+            adventurer_xp_lvl_ = 0
+
+            for index, value in ipairs(xp_) do
+                if adventurer_xp_lvl_ == 0 and value > adventurer_xp_ then
+                    adventurer_xp_lvl_ = index - 1
+                end
+
+                if producer_xp_lvl_ == 0 and value > producer_xp_ then
+                    producer_xp_lvl_ = index - 1
+                end
+            end
+        end
+    end)
+
+    -- on_logout.action(function()
+    --     relogin_ = true
+    -- end)
+
     return self
 end
 
@@ -1768,6 +1936,18 @@ end
 
 function ShroudOnMouseOut(id, type)
     on_mouse_exited.emit(id, type)
+end
+
+function ShroudOnSceneLoaded(scene_name)
+    on_scene_loaded.emit(scene_name)
+end
+
+function ShroudOnSceneUnloaded()
+    on_scene_unloaded.emit()
+end
+
+function ShroudOnLogout()
+    on_logout.emit()
 end
 
 ShroudDeltaTime = 0
@@ -1919,6 +2099,9 @@ local use_sample = function()
     end
 
     on_update.task(function()
+        local player = Player()
+        on_scene_loaded.emit()
+
         -----------------------------------
         --- Taskbar
 
@@ -1931,6 +2114,7 @@ local use_sample = function()
 
         local taskbar_center = HBox(0, 0, 400, 0, taskbar)
         taskbar_center.set_resize_dir(ui_resize_dir.Vertical)
+        taskbar_center.set_color(ui_color.None)
 
         local taskbar_right = HBox(0, 0, 0, 0, taskbar)
         taskbar_right.set_color(ui_color.None)
@@ -1945,6 +2129,97 @@ local use_sample = function()
         end)
 
         -----------------------------------
+        --- Left
+
+        local menu_button = Button(0, 0, 32, 0, ui_symbol.Menu, 14, taskbar_left)
+        menu_button.set_resize_dir(ui_resize_dir.Vertical)
+
+        local stats_button = Button(0, 0, 40, 0, "Stats", 12, taskbar_left)
+        stats_button.set_resize_dir(ui_resize_dir.Vertical)
+        stats_button.set_hovered_color(ui_color.DimGray)
+        stats_button.set_pressed_color(ui_color.Gray)
+        stats_button.set_toggle_mode(true)
+
+        -----------------------------------
+        --- Player Stats
+
+        local stats = Window(500, 100, 600, 400, "Stats")
+        stats.set_visible(false)
+
+        local stat_list = ItemList(0, 24, 600, 370, stats)
+        -- stat_list.add_items(get_player_stat_count(), stat_list)
+        stat_list.add_items(50, stat_list_item)
+
+        stats_button.on_toggled.action(function(pressed)
+            stats.set_visible(pressed)
+        end)
+
+        stats.on_close.action(function()
+            stats_button.on_pressed.emit(true)
+        end)
+
+        -----------------------------------
+        --- Center
+
+        local stopwatch = Button(0, 0, 80)
+        stopwatch.set_resize_dir(ui_resize_dir.Vertical)
+        stopwatch.set_text_value("00:00:00")
+        stopwatch.set_font_size(16)
+        stopwatch.set_font_bold(true)
+
+        local stopwatch_value = os.time()
+        on_redraw.action(function()
+            stopwatch.set_text_value(clock_value(os.time() - stopwatch_value))
+        end, 1)
+
+        stopwatch.on_pressed.action(function()
+            stopwatch_value = os.time()
+            player.reset_xp()
+        end)
+
+        local adventurer_xp = Label()
+        adventurer_xp.set_align(ui_anchor.MiddleRight)
+
+        local adventurer_level = Label(0, 0, 60)
+        adventurer_level.set_align(ui_anchor.MiddleCenter)
+        adventurer_level.set_resize_dir(ui_resize_dir.Vertical)
+        adventurer_level.set_font_size(11)
+
+        local producer_xp = Label()
+        producer_xp.set_align(ui_anchor.MiddleLeft)
+
+        local producer_level = Label(0, 0, 60)
+        producer_level.set_align(ui_anchor.MiddleCenter)
+        producer_level.set_resize_dir(ui_resize_dir.Vertical)
+        producer_level.set_font_size(11)
+
+        on_redraw.action(function()
+            local a_xp = player.adventurer_xp_gained()
+            local a_progress = math.floor(player.adventurer_xp_progress() * 100)
+
+            local p_xp = player.producer_xp_gained()
+            local p_progress = math.floor(player.producer_xp_progress() * 100)
+
+            local color = "#ffffff"
+            if player.adventurer_xp_att() then
+                color = "#cd6155"
+            end
+
+            adventurer_xp.set_value("<color=" .. color .. ">" .. comma_value(a_xp) .. "</color>")
+            adventurer_level.set_value("<b>" .. player.adventurer_level() .. "</b>:<size=9>" .. a_progress .. "%</size>")
+
+            --- has no att
+            producer_xp.set_value(comma_value(p_xp))
+            producer_level.set_value("<b>" .. player.producer_level() .. "</b>:<size=9>" .. p_progress .. "%</size>")
+        end, 1)
+
+        taskbar_center.add_child(adventurer_xp)
+        taskbar_center.add_child(adventurer_level)
+        taskbar_center.add_child(stopwatch)
+        taskbar_center.add_child(producer_level)
+        taskbar_center.add_child(producer_xp)
+
+        -----------------------------------
         --- Right
 
         local fps_value = Label(0, 0, 60, 0, "", 12, taskbar_right)
@@ -1954,14 +2229,6 @@ local use_sample = function()
         on_redraw.action(function(delta)
             fps_value.set_value(math.floor(1 / delta) .. " fps")
         end, 0.5)
-
-        -----------------------------------
-        --- Player Stats
-
-        -- local stats = Window(500, 100, 600, 400, "Stats")
-        -- local stat_list = ItemList(0, 24, 600, 370, stats)
-        -- -- stat_list.add_items(get_player_stat_count(), stat_list)
-        -- stat_list.add_items(50, stat_list_item)
     end)
 end
 
