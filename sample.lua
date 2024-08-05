@@ -8,6 +8,7 @@ local Description = "SOTA Sample UI"
 
 ---@enum ui_type
 local ui_type = {
+    None = -1,
     Panel = 0,  -- UI.Panel
     Image = 1,  -- UI.Image
     Text = 2,   -- UI.Text
@@ -196,14 +197,14 @@ local ui_texture
 ---------------------------------------
 --- Screen
 
-local screen_width = 0
-local screen_height = 0
+local screen_size_x = 0
+local screen_size_y = 0
 
 ---@type fun(): integer
-local get_screen_width
+local get_screen_size_x
 
 ---@type fun(): integer
-local get_screen_height
+local get_screen_size_y
 
 -------------------------------------------
 ---- Mouse and Keyboard
@@ -554,10 +555,13 @@ local on_mouse_dragging = Signal()
 local on_key_pressed = Event()
 local on_key_released = Event()
 
+local on_screen_changed = Signal()
+
 local on_scene_loaded = Event()
 local on_scene_unloaded = Event()
 
 local on_logout = Event()
+local on_redraw = Event()
 local on_update = Thread()
 
 -------------------------------------------
@@ -574,13 +578,19 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     local pos_y_ = pos_y
     local size_x_ = size_x
     local size_y_ = size_y
+    local min_size_x_ = size_x
+    local min_size_y_ = size_y
+    local resize_dir_ = ui_resize_dir.Both
+
     local id_ = node_id
     local type_ = node_type
+
     local parent_ = parent_node
+    local parent_id_ = -1
+    local parent_type_ = ui_type.None
 
     ---@class Node
     local self = {}
-
 
     ---@type Node[]
     local childs_ = {}
@@ -604,8 +614,12 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     self.on_pressed = Signal()
     self.on_toggled = Signal()
 
+    self.on_size_changed = Signal()
+    self.on_visibility_changed = Signal()
+
     self.on_child_entered_tree = Signal()
     self.on_child_exiting_tree = Signal()
+    self.on_child_order_changed = Signal()
 
     ---@return integer
     function self.id()
@@ -617,37 +631,42 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
         return type_
     end
 
-    function self.equal(i, t)
-        return (id_ == i) and (type_ == t)
+    function self.equal(other_id, other_type)
+        return (id_ == other_id) and (type_ == other_type)
     end
-
-    function self.parent_equal(i, t)
-        return parent_ and parent_.equal(i, t)
-    end
-
-    -- ---@param node Node
-    -- function self.add_child(node)
-    --     if not node.parent_equal(id_, type_) then
-    --         print("false")
-    --     end
-    --     table.insert(childs_, node)
-    -- end
 
     ---@param node Node
-    function self.remove_child(node)
-        for i, c in ipairs(childs_) do
-            if (node.id() == c.id()) and (node.type() == c.type()) then
-                table.remove(childs_, i)
-                if not silent_ then
-                    self.sort_childs()
-                end
-                break
+    function self.set_parent(node)
+        if not node.equal(parent_id_, parent_type_) then
+            if parent_ then
+                parent_.on_child_exiting_tree.emit(self)
             end
+            parent_ = node
+            parent_id_ = node.id()
+            parent_type_ = node.type()
+            ui_set_object_parent(id_, type_, parent_id_, parent_type_)
+            node.on_child_entered_tree.emit(self)
         end
     end
 
+    ---@return Node|nil
+    function self.get_parent()
+        return parent_
+    end
+
+    ---@param node Node
+    function self.add_child(node)
+        node.set_parent(self)
+    end
+
+    ---@param node Node
+    function self.remove_child(node)
+        node.destroy()
+    end
+
+    --- overload
     function self.sort_childs()
-        --- overload
+
     end
 
     ---@param index integer
@@ -717,9 +736,7 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
         if ui_set_object_size(id_, type_, x, y) then
             size_x_ = x
             size_y_ = y
-            -- if not silent_ then
-            --     self.sort_childs()
-            -- end
+            self.on_size_changed.emit(x, y)
         end
     end
 
@@ -731,6 +748,28 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
 
     function self.get_size()
         return size_x_, size_y_
+    end
+
+    ---@param x number
+    ---@param y number
+    function self.set_min_size(x, y)
+        min_size_x_ = x
+        min_size_y_ = y
+        if parent_ then
+            parent_.on_child_order_changed.emit()
+        end
+    end
+
+    function self.get_min_size()
+        return min_size_x_, min_size_y_
+    end
+
+    function self.get_min_size_x()
+        return min_size_x_
+    end
+
+    function self.get_min_size_y()
+        return min_size_y_
     end
 
     ---@param x number
@@ -749,6 +788,19 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
 
     function self.get_size_y()
         return size_y_
+    end
+
+    ---@param value ui_resize_dir
+    function self.set_resize_dir(value)
+        if value ~= resize_dir_ then
+            resize_dir_ = value
+            -- self.on_size_changed.emit(size_x_, size_y_)
+        end
+    end
+
+    ---@return ui_resize_dir
+    function self.get_resize_dir()
+        return resize_dir_
     end
 
     ---@param hexcolor ui_color|string
@@ -802,12 +854,11 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     function self.set_visible(value)
         if value and ui_show_object(id_, type_) then
             visible_ = true
+            self.on_visibility_changed.emit(true)
         elseif not value and ui_hide_object(id_, type_) then
             visible_ = false
+            self.on_visibility_changed.emit(false)
         end
-        -- if not silent_ and parent_ then
-        --     parent_.sort_childs()
-        -- end
     end
 
     function self.is_visible()
@@ -892,9 +943,9 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
 
     function self.destroy()
         if parent_ then
-            parent_.on_child_exiting_tree(self)
-            ui_destroy_object(id_, type_)
+            parent_.on_child_exiting_tree.emit(self)
         end
+        ui_destroy_object(id_, type_)
     end
 
     self.on_hovered.action(function(hovered)
@@ -935,9 +986,7 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     ---@param node Node
     self.on_child_entered_tree.action(function(node)
         table.insert(childs_, node)
-        if not silent_ then
-            self.sort_childs()
-        end
+        self.on_child_order_changed.emit()
     end)
 
     ---@param node Node
@@ -945,10 +994,14 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
         for index, child in ipairs(childs_) do
             if child.equal(node.id(), node.type()) then
                 table.remove(childs_, index)
+                self.on_child_order_changed.emit()
                 break
             end
         end
-        table.insert(childs_, node)
+    end)
+
+    self.on_size_changed.action(function(_, _)
+        self.on_child_order_changed.emit()
     end)
 
     if parent_ then
@@ -1054,6 +1107,7 @@ function Text(pos_x, pos_y, size_x, size_y, text_value, font_size, parent_node)
         self.set_value(value_)
     end
 
+    -- self.set_color(ui_color.White)
     self.set_align(anchor_)
     return self
 end
@@ -1072,6 +1126,228 @@ function Panel(pos_x, pos_y, size_x, size_y, parent_node)
 
     ui_unset_object_mouse_filter(self.id(), self.type())
     self.set_color(ui_color.Black .. "ee")
+    return self
+end
+
+---@param parent_node Node
+function Spacer(parent_node)
+    ---@class Spacer: Panel
+    local self = Panel(0, 0, 0, 0, parent_node)
+
+    self.set_resize_dir(ui_resize_dir.Both)
+    self.set_color(ui_color.None)
+    return self
+end
+
+---@param pos_x? number
+---@param pos_y? number
+---@param size_x? number
+---@param size_y? number
+---@param parent_node? Node
+function Container(pos_x, pos_y, size_x, size_y, parent_node)
+    ---@class Container: Panel
+    local self = Panel(pos_x, pos_y, size_x, size_y, parent_node)
+
+    self.on_sort_childs = Signal()
+
+    local content_offset_left_ = 0
+    local content_offset_top_ = 0
+    local content_offset_right_ = 0
+    local content_offset_bottom_ = 0
+    local content_gutter_width_ = 0
+
+    local set_content_offset_ = function(left, top, right, bottom, gutter)
+        content_offset_left_ = left
+        content_offset_top_ = top
+        content_offset_right_ = right
+        content_offset_bottom_ = bottom
+        content_gutter_width_ = gutter
+        self.on_sort_childs.emit()
+    end
+
+    ---@param left number
+    ---@param top number
+    ---@param right number
+    ---@param bottom number
+    ---@param gutter number
+    function self.set_content_offset(left, top, right, bottom, gutter)
+        set_content_offset_(left, top, right, bottom, gutter)
+    end
+
+    ---@param value number
+    function self.set_content_offset_left(value)
+        set_content_offset_(value, content_offset_top_, content_offset_right_, content_offset_bottom_,
+            content_gutter_width_)
+    end
+
+    ---@param value number
+    function self.set_content_offset_top(value)
+        set_content_offset_(content_offset_left_, value, content_offset_right_, content_offset_bottom_,
+            content_gutter_width_)
+    end
+
+    ---@param value number
+    function self.set_content_offset_right(value)
+        set_content_offset_(content_offset_left_, content_offset_top_, value, content_offset_bottom_,
+            content_gutter_width_)
+    end
+
+    ---@param value number
+    function self.set_content_offset_bottom(value)
+        set_content_offset_(content_offset_left_, content_offset_top_, content_offset_right_, value,
+            content_gutter_width_)
+    end
+
+    ---@param value number
+    function self.set_content_gutter_width(value)
+        set_content_offset_(content_offset_left_, content_offset_top_, content_offset_right_, content_offset_bottom_,
+            value)
+    end
+
+    ---@return number left
+    ---@return number top
+    ---@return number right
+    ---@return number bottom
+    ---@return number gutter
+    function self.get_content_offset()
+        return content_offset_left_, content_offset_top_, content_offset_right_, content_offset_bottom_,
+            content_gutter_width_
+    end
+
+    function self.add_spacer()
+        self.add_child(Spacer(self))
+    end
+
+    self.on_child_order_changed.action(function(_)
+        self.on_sort_childs.emit()
+    end)
+
+    return self
+end
+
+---@param pos_x? number
+---@param pos_y? number
+---@param size_x? number
+---@param size_y? number
+---@param parent_node? Node
+function HBox(pos_x, pos_y, size_x, size_y, parent_node)
+    ---@class HBox: Container
+    local self = Container(pos_x, pos_y, size_x, size_y, parent_node)
+
+    self.on_sort_childs.action(function()
+        local x, y = self.get_size()
+        local left, top, right, bottom, gutter = self.get_content_offset()
+
+        local c = 0
+        local c_i = {}
+        local e = 0
+        local e_i = {}
+        local w = 0
+
+        local childs = self.get_childs()
+        for index, child in ipairs(childs) do
+            if child.is_visible() then
+                c = c + 1
+                c_i[c] = index
+
+                local c_resize_dir = child.get_resize_dir()
+                if (c_resize_dir == ui_resize_dir.Both) or (c_resize_dir == ui_resize_dir.Horizontal) then
+                    e = e + 1
+                    e_i[c] = index
+                else
+                    w = w + child.get_min_size_x()
+                    e_i[c] = 0
+                end
+            end
+        end
+
+        if c > 0 then
+            local g_x = (c - 1) * gutter
+            local e_x = (x - w - g_x - left - right) / ((e > 0) and e or 1)
+
+            local offset_x = left
+            local offset_y = top
+            local height = y - top - bottom
+            for i = 1, c do
+                local idx = c_i[i]
+                local child = childs[idx]
+                local width = 0
+                child.set_position(offset_x, offset_y)
+                if e_i[i] > 0 then
+                    child.set_size(e_x, height)
+                    width = e_x
+                else
+                    width = child.get_min_size_x()
+                    child.set_size(width, height)
+                end
+                offset_x = offset_x + width + gutter
+            end
+        end
+    end)
+
+    return self
+end
+
+---@param pos_x? number
+---@param pos_y? number
+---@param size_x? number
+---@param size_y? number
+---@param parent_node? Node
+function VBox(pos_x, pos_y, size_x, size_y, parent_node)
+    ---@class VBox: Container
+    local self = Container(pos_x, pos_y, size_x, size_y, parent_node)
+
+    self.on_sort_childs.action(function()
+        local x, y = self.get_size()
+        local left, top, right, bottom, gutter = self.get_content_offset()
+
+        local c = 0
+        local c_i = {}
+        local e = 0
+        local e_i = {}
+        local h = 0
+
+        local childs = self.get_childs()
+        for index, child in ipairs(childs) do
+            if child.is_visible() then
+                c = c + 1
+                c_i[c] = index
+
+                local c_resize_dir = child.get_resize_dir()
+                if (c_resize_dir == ui_resize_dir.Both) or (c_resize_dir == ui_resize_dir.Vertical) then
+                    e = e + 1
+                    e_i[c] = index
+                else
+                    h = h + child.get_min_size_y()
+                    e_i[c] = 0
+                end
+            end
+        end
+
+        if c > 0 then
+            local g_y = (c - 1) * gutter
+            local e_y = (y - h - g_y - top - bottom) / ((e > 0) and e or 1)
+
+            local offset_x = left
+            local offset_y = top
+            local width = x - left - right
+            for i = 1, c do
+                local idx = c_i[i]
+                local child = childs[idx]
+                local height = 0
+                child.set_position(offset_x, offset_y)
+                if e_i[i] > 0 then
+                    child.set_size(width, e_y)
+                    height = e_y
+                else
+                    height = child.get_min_size_y()
+                    child.set_size(width, height)
+                end
+                offset_y = offset_y + height + gutter
+            end
+        end
+    end)
+
     return self
 end
 
@@ -1096,7 +1372,7 @@ function Window(pos_x, pos_y, size_x, size_y, title)
         title_.set_value(text)
     end
 
-    self.sort_childs = function ()
+    self.sort_childs = function()
         local w, h = self.get_size()
         header_.set_size(w, 24)
         for index, child in ipairs(self.get_childs()) do
@@ -1119,7 +1395,7 @@ function Window(pos_x, pos_y, size_x, size_y, title)
         end
     end)
 
-    close_.on_pressed.action(function (pressed)
+    close_.on_pressed.action(function(pressed)
         self.set_visible(false)
         self.on_close.emit()
     end)
@@ -1169,10 +1445,11 @@ function Button(pos_x, pos_y, size_x, size_y, text_value, font_size, parent_node
     self.set_font_size = label_.set_font_size
     self.set_font_bold = label_.set_font_bold
 
-    self.sort_childs = function()
+    self.on_child_order_changed.action(function()
         label_.set_size(self.get_size())
-    end
+    end)
 
+    self.set_normal_color(ui_color.DarkGray)
     self.set_text_align(ui_anchor.MiddleCenter)
     self.set_mouse_filter(true)
     return self
@@ -1493,7 +1770,10 @@ function ShroudOnMouseOut(id, type)
     on_mouse_exited.emit(id, type)
 end
 
+ShroudDeltaTime = 0
+
 function ShroudOnUpdate()
+    on_redraw.emit(ShroudDeltaTime)
     on_update.resume()
 end
 
@@ -1532,8 +1812,8 @@ function ShroudOnStart()
     ui_show = ShroudShowLuaUI
     ui_hide = ShroudHideLuaUI
 
-    get_screen_width = ShroudGetScreenX
-    get_screen_height = ShroudGetScreenY
+    get_screen_size_x = ShroudGetScreenX
+    get_screen_size_y = ShroudGetScreenY
 
     is_key_pressed = ShroudGetOnKeyDown
     is_key_released = ShroudGetOnKeyUp
@@ -1592,14 +1872,19 @@ function ShroudOnStart()
                 mouse_y_spd = 0
             end
 
-            on_mouse_dragging.emit()
+            if (mouse_x ~= m_x) or (mouse_y ~= m_y) then
+                on_mouse_dragging.emit()
+            end
         end
-
         mouse_x = m_x
         mouse_y = m_y
 
-        screen_width = get_screen_width()
-        screen_height = get_screen_height()
+        local s_x, s_y = get_screen_size_x(), get_screen_size_y()
+        if (screen_size_x ~= s_x) or (screen_size_y ~= s_y) then
+            on_screen_changed.emit()
+        end
+        screen_size_x = s_x
+        screen_size_y = s_y
     end)
 
     ---@diagnostic enable: undefined-global
@@ -1608,6 +1893,15 @@ end
 local use_test = function()
     on_update.task(function()
         local color = ui_color.Black .. "ee"
+
+        local panel = HBox(0, 0, screen_size_x, 24)
+
+        local child = HBox(100, 0, 100, 24, panel)
+        child.set_color(ui_color.BlueGray)
+        child.set_resize_dir(ui_resize_dir.Vertical)
+        -- child.set_size_x(100)
+
+        panel.set_size_y(30)
     end)
 end
 
@@ -1616,7 +1910,7 @@ local use_sample = function()
     ---@param index integer
     ---@param node Node
     ---@return Node
-    local stat_list = function(index, node)
+    local stat_list_item = function(index, node)
         local idx = Label(0, 0, 32, 0, tostring(index), 12, node)
         local name = Label(0, 0, 0, 0, get_player_stat_name(index), 12, node)
         local value = Label(0, 0, 120, 0, tostring(get_player_stat_value(index)), 12, node)
@@ -1625,10 +1919,49 @@ local use_sample = function()
     end
 
     on_update.task(function()
-        local window = Window(500, 100, 600, 400, "Stats")
-        local list = ItemList(0, 24, 600, 370, window)
-        -- list.add_items(get_player_stat_count(), stat_list)
-        list.add_items(50, stat_list)
+        -----------------------------------
+        --- Taskbar
+
+        local taskbar = HBox(0, 0, screen_size_x, 24)
+        taskbar.set_color(ui_color.Black .. "fc")
+        taskbar.set_content_offset(10, 2, 10, 2, 10)
+
+        local taskbar_left = HBox(0, 0, 0, 0, taskbar)
+        taskbar_left.set_color(ui_color.None)
+
+        local taskbar_center = HBox(0, 0, 400, 0, taskbar)
+        taskbar_center.set_resize_dir(ui_resize_dir.Vertical)
+
+        local taskbar_right = HBox(0, 0, 0, 0, taskbar)
+        taskbar_right.set_color(ui_color.None)
+        taskbar_right.add_spacer()
+
+        local taskbar_border = Panel(0, 24, screen_size_x, 1)
+        taskbar_border.set_color(ui_color.White .. "22")
+
+        on_screen_changed.action(function()
+            taskbar.set_size_x(screen_size_x)
+            taskbar_border.set_size_x(screen_size_x)
+        end)
+
+        -----------------------------------
+        --- Right
+
+        local fps_value = Label(0, 0, 60, 0, "", 12, taskbar_right)
+        fps_value.set_resize_dir(ui_resize_dir.Vertical)
+        fps_value.set_align(ui_anchor.MiddleRight)
+
+        on_redraw.action(function(delta)
+            fps_value.set_value(math.floor(1 / delta) .. " fps")
+        end, 0.5)
+
+        -----------------------------------
+        --- Player Stats
+
+        -- local stats = Window(500, 100, 600, 400, "Stats")
+        -- local stat_list = ItemList(0, 24, 600, 370, stats)
+        -- -- stat_list.add_items(get_player_stat_count(), stat_list)
+        -- stat_list.add_items(50, stat_list_item)
     end)
 end
 
