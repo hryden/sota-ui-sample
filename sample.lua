@@ -17,6 +17,19 @@ local ui_type = {
     Toggle = 5  -- UI.Toggle
 }
 
+---@enum ui_input_type
+local ui_input_type = {
+    Standard = 0,      -- ContentType.Standard
+    Autocorrected = 1, -- ContentType.Autocorrected
+    IntegerNumber = 2, -- ContentType.IntegerNumber
+    DecimalNumber = 3, -- ContentType.DecimalNumber
+    Alphanumeric = 4,  -- ContentType.Alphanumeric
+    Name = 5,          -- ContentType.Name
+    EmailAddress = 6,  -- ContentType.EmailAddress
+    Password = 7,      -- ContentType.Password
+    Pin = 8            -- ContentType.Pin
+}
+
 ---@enum ui_state
 local ui_state = {
     Normal = 0,
@@ -53,6 +66,11 @@ local ui_color = {
     CornflowerBlue = "#6495ED",
     Gold = "#FFD700",
     Oxblood = "#4A0404"
+}
+
+---@enum ui_texture
+local ui_texture = {
+    Sample = 0
 }
 
 ---@enum ui_symbol
@@ -195,8 +213,29 @@ local ui_set_font_size
 ---@type fun(path: string, clamp: boolean): integer
 local ui_image_texture
 
----@type integer
-local ui_texture
+---------------------------------------
+--- UI Input
+
+---@type fun(id: integer): string
+local ui_get_input_text
+
+---@type fun(id: integer, text: string): boolean
+local ui_set_input_text
+
+---@type fun(id: integer, type: ui_input_type): boolean
+local ui_set_input_type
+
+---@type fun(id: integer, text: string): boolean
+local ui_set_input_placeholder
+
+---@type fun(id: integer, hexcolor: ui_color|string): boolean
+local ui_set_input_bg_color
+
+---@type fun(id: integer, limit: integer): boolean
+local ui_set_input_limit
+
+---@type fun(id: integer, value: boolean): boolean
+local ui_set_input_readonly
 
 ---------------------------------------
 --- Screen
@@ -598,6 +637,8 @@ local on_screen_changed = Signal()
 local on_scene_loaded = Event()
 local on_scene_unloaded = Event()
 
+local on_input_change = Event()
+
 local on_logout = Event()
 
 local on_redraw = Event()
@@ -648,6 +689,8 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     local toggled_ = false
     local toggle_mode_ = false
     local mouse_filter_ = false
+
+    self.on_ready = Signal()
 
     self.on_hovered = Signal()
     self.on_pressed = Signal()
@@ -1041,6 +1084,12 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
         self.on_child_order_changed.emit()
     end)
 
+    self.on_visibility_changed.action(function(value)
+        if parent_ then
+            parent_.on_child_order_changed.emit()
+        end
+    end)
+
     if parent_ then
         parent_.on_child_entered_tree.emit(self)
     end
@@ -1058,14 +1107,14 @@ function Image(pos_x, pos_y, size_x, size_y, texture_id, parent_node)
     pos_y = pos_y or 0
     size_x = size_x or 0
     size_y = size_y or 0
-    texture_id = texture_id or ui_texture
+    texture_id = texture_id or ui_texture.Sample
 
     local id_ = -1
     local type_ = ui_type.Image
     if parent_node then
-        id_ = ui_image(pos_x, pos_y, size_x, size_y, ui_texture, parent_node.id(), parent_node.type())
+        id_ = ui_image(pos_x, pos_y, size_x, size_y, texture_id, parent_node.id(), parent_node.type())
     else
-        id_ = ui_image(pos_x, pos_y, size_x, size_y, ui_texture)
+        id_ = ui_image(pos_x, pos_y, size_x, size_y, texture_id)
     end
 
     ---@class Image: Node
@@ -1150,6 +1199,85 @@ function Text(pos_x, pos_y, size_x, size_y, text_value, font_size, parent_node)
 
     -- self.set_color(ui_color.White)
     self.set_align(anchor_)
+    return self
+end
+
+---@param pos_x? number
+---@param pos_y? number
+---@param size_x? number
+---@param size_y? number
+---@param parent_node? Node
+function Input(pos_x, pos_y, size_x, size_y, parent_node)
+    pos_x = pos_x or 0
+    pos_y = pos_y or 0
+    size_x = size_x or 0
+    size_y = size_y or 0
+
+    local id_ = -1
+    local type_ = ui_type.Input
+    if parent_node then
+        id_ = ui_input(pos_x, pos_y, size_x, size_y, parent_node.id(), parent_node.type())
+    else
+        id_ = ui_input(pos_x, pos_y, size_x, size_y)
+    end
+
+    ---@class Input: Node
+    local self = Node(pos_x, pos_y, size_x, size_y, id_, type_, parent_node)
+
+    local value_ = ""
+    local placeholder_ = ""
+    self.on_value_changed = Signal()
+
+    ---@param value ui_input_type
+    function self.set_type(value)
+        ui_set_input_type(id_, value)
+    end
+
+    ---@param text string
+    function self.set_value(text)
+        if ui_set_input_text(id_, text) then
+            value_ = text
+        end
+    end
+
+    function self.get_value()
+        return value_
+    end
+
+    ---@param text string
+    function self.set_placeholder(text)
+        if ui_set_input_placeholder(id_, text) then
+            placeholder_ = text
+        end
+    end
+
+    function self.get_placeholder()
+        return placeholder_
+    end
+
+    ---@param value integer
+    function self.set_limit(value)
+        ui_set_input_limit(id_, value)
+    end
+
+    ---@param value boolean
+    function self.set_readonly(value)
+        ui_set_input_readonly(id_, value)
+    end
+
+    function self.set_font_size(value)
+        ui_set_font_size(id_, type_, value)
+    end
+
+    ---@param hexcolor ui_color|string
+    function self.set_bg_color(hexcolor)
+        ui_set_input_bg_color(id_, hexcolor)
+    end
+
+    on_input_change.action(function(_, text)
+        value_ = text
+        self.on_value_changed.emit(text)
+    end, 0, id_)
     return self
 end
 
@@ -1429,6 +1557,7 @@ function Window(pos_x, pos_y, size_x, size_y, title)
     footer_.add_spacer()
 
     local title_ = Text()
+    title_.set_font_size(16)
     title_.set_normal_color(ui_color.DimGray)
     title_.set_hovered_color(ui_color.DimGray)
     title_.set_pressed_color(ui_color.DimGray)
@@ -1595,26 +1724,28 @@ function CheckBox(pos_x, pos_y, size, parent_node)
     return self
 end
 
----@param pos_x? number
----@param pos_y? number
----@param size_x? number
----@param size_y? number
+---@param horizontal? boolean
 ---@param background_color? ui_color|string
 ---@param progress_color? ui_color|string
 ---@param parent_node? Node
-function ProgressBar(pos_x, pos_y, size_x, size_y, background_color, progress_color, parent_node)
+function ProgressBar(horizontal, background_color, progress_color, parent_node)
     local background_color_ = background_color or ui_color.Black
     local progress_color_ = progress_color or ui_color.DimGray
+    local horizontal_ = horizontal and true or false
 
     ---@class ProgressBar: Panel
-    local self = Panel(pos_x, pos_y, size_x, size_y, parent_node)
-    local line_ = Panel(pos_x, pos_y, 0, size_y, self)
+    local self = Panel(0, 0, 0, 0, parent_node)
+    local line_ = Panel(0, 0, 0, 0, self)
 
     local value_ = 0
 
     function self.set_value(value)
         value_ = clamp_value(value, 0, 1)
-        line_.set_size_x(self.get_size_x() * value)
+        if horizontal_ then
+            line_.set_size_x(self.get_size_x() * value)
+        else
+            line_.set_size_y(self.get_size_y() * value)
+        end
     end
 
     ---@param hexcolor ui_color|string
@@ -1622,10 +1753,13 @@ function ProgressBar(pos_x, pos_y, size_x, size_y, background_color, progress_co
         line_.set_color(hexcolor)
     end
 
-    --- TODO: remove
-    self.sort_childs = function()
-        line_.set_size(value_ / self.get_size_x(), self.get_size_y())
-    end
+    self.on_size_changed.action(function(x, y)
+        if horizontal_ then
+            line_.set_size(value_ / x, y)
+        else
+            line_.set_size(x, value_ / y)
+        end
+    end)
 
     self.set_color(background_color_)
     line_.set_color(progress_color_)
@@ -1664,14 +1798,14 @@ function ScrollBar(horizontal, parent_node)
             max = self.get_size_y() - grabber_.get_size_y()
             pos = grabber_.get_pos_y() + mouse_y_spd * mouse_y_dir
         end
-        
+
         if pos >= 0 and pos <= max then
             if horizontal_ then
                 grabber_.set_pos_x(pos)
             else
                 grabber_.set_pos_y(pos)
             end
-            
+
             if max == 0 then
                 max = 1
             end
@@ -1688,7 +1822,6 @@ function ScrollBar(horizontal, parent_node)
             else
                 self.set_value((mouse_y - pos_y) / self.get_size_y())
             end
-            
         end
     end)
 
@@ -1700,7 +1833,7 @@ function ScrollBar(horizontal, parent_node)
             grabber_.set_size(x, 50)
             grabber_.set_pos_y((y - grabber_.get_size_y()) * value_)
         end
-        
+
         self.on_value_changed.emit(value_)
     end)
 
@@ -1741,18 +1874,20 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
     item_list_.set_content_gutter_width(1)
     item_list_.set_color(ui_color.Gray .. "22")
 
-    self.on_child_order_changed.action(function()
+    self.on_sort_childs.action(function()
         item_list_.set_size_x(content_.get_size_x())
     end)
 
-    local progress_bar_ = ProgressBar(0, 0, 1, 0, ui_color.Black, ui_color.White .. "22", self)
-    progress_bar_.set_resize_dir(ui_resize_dir.Vertical)
+    -- local progress_bar_ = ProgressBar(false, ui_color.Black, ui_color.White .. "22", self)
+    -- progress_bar_.set_resize_dir(ui_resize_dir.Vertical)
+    -- progress_bar_.set_min_size(2, 0)
 
-    local scroll_bar_ = ScrollBar()
+    local scroll_bar_ = ScrollBar(false, self)
     scroll_bar_.set_resize_dir(ui_resize_dir.Vertical)
     scroll_bar_.set_min_size(scroll_size_, 0)
 
-    self.add_child(scroll_bar_)
+    self.on_filter_items = Signal()
+    self.on_items_changed = Signal()
 
     ---@param n integer
     ---@param callback fun(index: integer, item: Node): Node
@@ -1767,7 +1902,7 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
         if not item then
             item = HBox(0, 0, 0, item_height_, item_list_)
             item.set_resize_dir(ui_resize_dir.Horizontal)
-            item.set_content_offset_left(10)
+            item.set_content_offset(10, 0, 10, 0, 10)
             item_init = true
         end
 
@@ -1791,14 +1926,15 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
                     ---@type HBox
                     row = callback(i, HBox(0, y, 0, item_height_, item_list_))
                     row.set_resize_dir(ui_resize_dir.Horizontal)
-                    row.set_content_offset_left(10)
+                    row.set_content_offset(10, 0, 10, 0, 10)
                 end
 
                 row.set_pos_y(y)
                 row.set_size(width, item_height_)
                 y = y + item_height_ + item_gutter_
                 item_list_.set_size_y(y)
-                progress_bar_.set_value(i / n)
+
+                self.on_items_changed.emit(rows_, i)
                 -- if y >= h then -- follow
                 --     scroll_bar_.set_value((y - h) / h)
                 -- end
@@ -1807,8 +1943,8 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
 
         on_update.task(function()
             print(os.clock() - start)
-            progress_bar_.set_value(0)
             item_list_.set_silent(false)
+            self.on_ready.emit()
         end)
     end
 
@@ -1825,6 +1961,45 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
         local h = item_list_.get_size_y() - content_.get_size_y()
         local pos = -1 * h * value
         item_list_.set_pos_y(pos)
+    end)
+
+    self.on_filter_items.action(function(column, value)
+        if column <= columns_ then
+            scroll_bar_.set_value(0)
+            item_list_.set_silent(true)
+            
+            if value == "" then
+                for _, item in ipairs(item_list_.get_childs()) do
+                    item.set_visible(true)
+                end
+                self.on_items_changed.emit(rows_, rows_)
+            else
+                local status, result = pcall(string.find, "", value)
+                if not status then
+                    return
+                end
+
+                local c = 0
+                for index, item in ipairs(item_list_.get_childs()) do
+                    local item_column = item.get_childs()[column]
+
+                    ---@cast item_column Label
+                    local text = item_column.get_value()
+                    
+                    local r = string.find(text, value)
+                    if r then
+                        c = c + 1
+                        item.set_visible(true)
+                    else
+                        item.set_visible(false)
+                    end
+                end
+                self.on_items_changed.emit(rows_, c)
+            end
+            
+            item_list_.set_silent(false)
+            item_list_.on_sort_childs.emit()
+        end
     end)
 
     return self
@@ -1994,6 +2169,10 @@ function ShroudOnSceneUnloaded()
     on_scene_unloaded.emit()
 end
 
+function ShroudOnInputChange(id, text)
+    on_input_change.emit(id, text)
+end
+
 function ShroudOnLogout()
     on_logout.emit()
 end
@@ -2010,6 +2189,7 @@ function ShroudOnStart()
 
     ui_type = UI
     ui_anchor = TextAnchor
+    ui_input_type = ContentType
 
     ui_panel = ShroudUIPanel
     ui_text = ShroudUIText
@@ -2036,7 +2216,18 @@ function ShroudOnStart()
     ui_set_text_value = ShroudModifyText
     ui_set_text_align = ShroudSetTextAlignment
     ui_set_font_size = ShroudSetFontSize
+
+    ui_get_input_text = ShroudGetInputText
+    ui_set_input_text = ShroudSetInputText
+    ui_set_input_type = ShroudSetInputContentType
+    ui_set_input_placeholder = ShroudSetPlaceholderText
+    ui_set_input_bg_color = ShroudSetInputBackgroundColor
+    ui_set_input_limit = ShroudSetInputCharacterLimit
+    ui_set_input_readonly = ShroudSetInputReadonly
+
     ui_image_texture = ShroudLoadTexture
+    ui_texture.Sample = ui_image_texture("sample.png", true)
+
     ui_show = ShroudShowLuaUI
     ui_hide = ShroudHideLuaUI
 
@@ -2062,8 +2253,6 @@ function ShroudOnStart()
     get_player_stat_description = ShroudGetStatDescriptionByNumber
 
     ShroudUseLuaConsoleForPrint(true)
-
-    ui_texture = ui_image_texture("sample.png", true)
 
     on_update.action(function()
         if is_key_pressed(key_code.MouseButtonLeft) then
@@ -2122,7 +2311,11 @@ local use_test = function()
     on_update.task(function()
         local color = ui_color.Black .. "ee"
 
-        local window = Window(400, 200, 600, 400, "Stats")
+        local input = Input(100, 200, 300, 32)
+        
+        input.on_value_changed.action(function(text)
+            print(text)
+        end)
     end)
 end
 
@@ -2189,12 +2382,12 @@ local use_sample = function()
         -----------------------------------
         --- Player Stats
 
-        local stats = Window(500, 100, 600, 400, "Stats")
+        local stats = Window(500, 100, 600, 400)
         stats.set_visible(false)
 
         local stat_list = ItemList(0, 0, 0, 0, stats)
-        -- stat_list.add_items(get_player_stat_count(), stat_list_item)
-        stat_list.add_items(50, stat_list_item)
+        stat_list.add_items(get_player_stat_count(), stat_list_item)
+        -- stat_list.add_items(50, stat_list_item)
 
         stats_button.on_toggled.action(function(pressed)
             stats.set_visible(pressed)
@@ -2203,6 +2396,44 @@ local use_sample = function()
         stats.on_close.action(function()
             stats_button.on_pressed.emit(true)
         end)
+
+        --- test
+        stats_button.on_pressed.emit(true)
+
+        local stats_filter = Input(0, 0, 200, 28)
+        stats_filter.set_resize_dir(ui_resize_dir.Node)
+        stats_filter.set_bg_color(ui_color.Black .. "ee")
+        stats_filter.set_color(ui_color.White)
+        stats_filter.set_placeholder("filter by name ...")
+        stats_filter.set_font_size(12)
+        stats_filter.set_readonly(true)
+
+        stat_list.on_ready.action(function()
+            stats_filter.set_readonly(false)
+        end)
+
+        stats_filter.on_value_changed.action(function(text)
+            stat_list.on_filter_items.emit(2, text)
+        end)
+
+        local stats_count = Label()
+        stats_count.set_font_size(16)
+        stats_count.set_color(ui_color.DimGray)
+
+        stat_list.on_items_changed.action(function(total, visible)
+            
+            stats_count.set_value(total .. " : " .. visible)
+        end)
+
+        local stats_header = stats.get_header_box()
+        stats_header.set_color(ui_color.None)
+        stats_header.set_content_offset(0, 2, 0, 2, 10)
+        stats_header.set_min_size(300, 0)
+        stats_header.set_resize_dir(ui_resize_dir.Vertical)
+
+        stats_header.add_child(stats_filter)
+        stats_header.add_child(stats_count)
+        stats_header.set_visible(true)
 
         -----------------------------------
         --- Center
