@@ -442,7 +442,6 @@ function Config()
         if f then
             f:write(json.serialize(data_))
             f:close()
-            print("save")
         end
 
         updated_ = false
@@ -1621,10 +1620,11 @@ function Window(pos_x, pos_y, size_x, size_y, title)
 
     local header_ = HBox(0, 0, 0, 32, self)
     header_.set_resize_dir(ui_resize_dir.Horizontal)
-    header_.set_color(ui_color.DarkGray .. "ee")
+    header_.set_color(ui_color.None)
     header_.set_content_offset(10, 0, 0, 0, 10)
 
     local header_box_ = HBox()
+    header_box_.set_color(ui_color.None)
     header_box_.set_visible(false)
     header_.add_child(header_box_)
 
@@ -1636,13 +1636,12 @@ function Window(pos_x, pos_y, size_x, size_y, title)
 
     local footer_ = HBox(0, 0, 0, 24, self)
     footer_.set_resize_dir(ui_resize_dir.Horizontal)
-    footer_.set_color(ui_color.DarkGray .. "ee")
+    footer_.set_color(ui_color.None)
     footer_.set_content_offset(10, 0, 0, 0, 10)
 
     local footer_box_ = HBox()
-    footer_box_.set_visible(false)
+    footer_box_.set_color(ui_color.None)
     footer_.add_child(footer_box_)
-    footer_.add_spacer()
 
     local title_ = Text()
     title_.set_font_size(16)
@@ -2061,6 +2060,12 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
         end
     end
 
+    function self.get_item_column(index, column)
+        if (index <= item_count_) and (column <= columns_) then
+            return item_list_.get_child(index).get_child(column)
+        end
+    end
+
     ---@param column integer
     ---@param value number
     function self.set_column_width(column, value)
@@ -2150,6 +2155,7 @@ function Player()
 
     self.on_relogin = Signal()
     self.on_combat_mode = Signal()
+    self.on_stat_check_changed = Signal()
 
     local nickname_ = ""
     local combat_mode_ = false
@@ -2296,12 +2302,14 @@ function Player()
                         return
                     else
                         table.remove(stat_check_, i)
+                        self.on_stat_check_changed.emit(#stat_check_)
                         break
                     end
                 end
             end
             if value then
                 table.insert(stat_check_, index)
+                self.on_stat_check_changed.emit(#stat_check_)
             end
             config_.set_value("stat_watch", stat_watch_)
         end
@@ -2380,7 +2388,6 @@ function Player()
                 end
                 config_.set_value("stat_watch", stat_watch_)
                 config_.save()
-                print("not found stat_watch")
             else
                 local s = config_.get_value("stat_watch")
                 for i = 1, stat_count_ do
@@ -2388,6 +2395,7 @@ function Player()
                     stat_watch_[i] = watch
                     if watch then
                         table.insert(stat_check_, i)
+                        self.on_stat_check_changed.emit(#stat_check_)
                     end
                 end
             end
@@ -2628,7 +2636,7 @@ local use_sample = function()
         -----------------------------------
         --- Player Stats
 
-        local stats = Window(500, 100, 500, 200)
+        local stats = Window(500, 100, 500, 200, "Stats")
         stats.set_visible(false)
         stats.set_size_y(400)
 
@@ -2674,7 +2682,7 @@ local use_sample = function()
 
         local stats_filter = Input(0, 0, 200, 28)
         stats_filter.set_resize_dir(ui_resize_dir.Node)
-        stats_filter.set_bg_color(ui_color.Black .. "ee")
+        stats_filter.set_bg_color(ui_color.Black)
         stats_filter.set_color(ui_color.White)
         stats_filter.set_placeholder("filter by name ...")
         stats_filter.set_font_size(12)
@@ -2689,30 +2697,59 @@ local use_sample = function()
         end)
 
         local stats_header = stats.get_header_box()
-        stats_header.set_color(ui_color.None)
         stats_header.set_content_offset(0, 2, 0, 2, 10)
-        stats_header.set_min_size(300, 0)
+        stats_header.set_min_size(250, 0)
         stats_header.set_resize_dir(ui_resize_dir.Vertical)
 
+        local stats_total = Label()
+        stats_total.set_color(ui_color.DimGray)
+        stats_total.set_align(ui_anchor.MiddleRight)
+
+        local stats_visible = Label()
+        stats_visible.set_color(ui_color.DimGray)
+        stats_visible.set_align(ui_anchor.MiddleRight)
+
+        stat_list.on_items_changed.action(function(total, visible)
+            stats_total.set_value(total .. "  total")
+            stats_visible.set_value(visible)
+        end)
+
+        local stats_check = Text()
+        stats_check.set_mouse_filter(true)
+        stats_check.set_align(ui_anchor.MiddleLeft)
+        stats_check.set_normal_color(ui_color.DimGray)
+        stats_check.set_hovered_color(ui_color.White)
+        stats_check.set_pressed_color(ui_color.DimGray)
+
+        stats_check.on_pressed.action(function(pressed)
+            if pressed then
+                local list = player.stat_check()
+                local count = #list
+                for i = 1, count do
+                    local checkbox = stat_list.get_item_column(list[1], 4)
+                    ---@cast checkbox CheckBox
+                    if checkbox then
+                        checkbox.on_pressed.emit(true)
+                    end
+                end
+            end
+        end)
+        
+        player.on_stat_check_changed.action(function(checked)
+            stats_check.set_value("check  " .. checked)
+        end)
+
+        player.on_stat_check_changed.emit(#player.stat_check())
+
+        local stats_footer = stats.get_footer_box()
+        stats_footer.set_content_offset(0, 2, 0, 2, 40)
+
+        stats_header.add_child(stats_visible)
         stats_header.add_child(stats_filter)
         stats_header.set_visible(true)
 
-        local stats_count = Label()
-        stats_count.set_color(ui_color.Gray)
-
-        stat_list.on_items_changed.action(function(total, visible)
-            stats_count.set_value("total: " .. total ..
-                "    visible: " .. visible)
-        end)
-
-        local stats_footer = stats.get_footer_box()
-        stats_footer.set_color(ui_color.None)
-        stats_footer.set_content_offset(0, 2, 0, 2, 10)
-        stats_footer.set_min_size(300, 0)
-        stats_footer.set_resize_dir(ui_resize_dir.Vertical)
-
-        stats_footer.add_child(stats_count)
-        stats_footer.set_visible(true)
+        stats_footer.add_child(stats_total)
+        stats_footer.add_child(stats_check)
 
         on_redraw.action(function(delta)
             for _, v in ipairs(player.stat_check()) do
