@@ -1901,10 +1901,6 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
     item_list_.set_content_gutter_width(1)
     item_list_.set_color(ui_color.Gray .. "22")
 
-    -- local progress_bar_ = ProgressBar(false, ui_color.Black, ui_color.White .. "22", self)
-    -- progress_bar_.set_resize_dir(ui_resize_dir.Vertical)
-    -- progress_bar_.set_min_size(2, 0)
-
     local scroll_bar_ = ScrollBar(false, self)
     scroll_bar_.set_resize_dir(ui_resize_dir.Vertical)
     scroll_bar_.set_min_size(scroll_size_, 0)
@@ -1955,7 +1951,6 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
                 row.set_pos_y(y)
                 row.set_size(width, item_height_)
                 y = y + item_height_ + item_gutter_
-                item_list_.set_size_y(y)
 
                 self.on_items_changed.emit(rows_, i)
                 -- if y >= h then -- follow
@@ -1999,11 +1994,14 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
 
     content_.on_size_changed.action(function(_, y)
         set_scroll_max(item_list_.get_size_y() - y)
-        print(item_list_.get_size_y() - y)
     end)
 
     self.on_sort_childs.action(function()
         item_list_.set_size_x(content_.get_size_x())
+    end)
+
+    self.on_items_changed.action(function(total, ready)
+        item_list_.set_size_y(ready * (item_height_ + item_gutter_))
     end)
 
     self.on_filter_items.action(function(column, value)
@@ -2364,24 +2362,6 @@ local use_test = function()
 end
 
 local use_sample = function()
-    ---comment
-    ---@param index integer
-    ---@param node Node
-    ---@return Node
-    local stat_list_item = function(index, node)
-        local idx = Label(0, 0, 32, 0, tostring(index), 12, node)
-        idx.set_resize_dir(ui_resize_dir.Vertical)
-
-        local name = Label(0, 0, 0, 0, get_player_stat_name(index), 12, node)
-
-        local value = Label(0, 0, 120, 0, tostring(get_player_stat_value(index)), 12, node)
-        value.set_resize_dir(ui_resize_dir.Vertical)
-
-        local check = CheckBox(0, 0, 24, node)
-        check.set_resize_dir(ui_resize_dir.Vertical)
-        return node
-    end
-
     on_update.task(function()
         local player = Player()
 
@@ -2426,8 +2406,24 @@ local use_sample = function()
         -----------------------------------
         --- Player Stats
 
-        local stats = Window(500, 100, 600, 400)
+        local stats = Window(500, 100, 500, 200)
         stats.set_visible(false)
+
+        ---@param index integer
+        ---@param node Node
+        local stat_list_item = function(index, node)
+            local idx = Label(0, 0, 32, 0, tostring(index), 12, node)
+            idx.set_resize_dir(ui_resize_dir.Vertical)
+
+            local name = Label(0, 0, 0, 0, get_player_stat_name(index), 12, node)
+
+            local value = Label(0, 0, 120, 0, tostring(get_player_stat_value(index)), 12, node)
+            value.set_resize_dir(ui_resize_dir.Vertical)
+
+            local check = CheckBox(0, 0, 24, node)
+            check.set_resize_dir(ui_resize_dir.Vertical)
+            return node
+        end
 
         local stat_list = ItemList(0, 0, 0, 0, stats)
         stat_list.add_items(get_player_stat_count(), stat_list_item)
