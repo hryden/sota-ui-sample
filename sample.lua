@@ -932,6 +932,10 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
 
     ---@param value boolean
     function self.set_visible(value)
+        if visible_ == value then
+            return
+        end
+
         if value and ui_show_object(id_, type_) then
             visible_ = true
             self.on_visibility_changed.emit(true)
@@ -1596,7 +1600,7 @@ function Window(pos_x, pos_y, size_x, size_y, title)
     end
 
     function self.get_footer_box()
-        return header_box_
+        return footer_box_
     end
 
     title_.on_dragging.action(function()
@@ -1774,19 +1778,50 @@ function ScrollBar(horizontal, parent_node)
     ---@class ScrollBar: Image
     local self = Image(0, 0, 0, 0, nil, parent_node)
     local grabber_ = Image(0, 0, 0, 0, nil, self)
+    local grabber_min_size_ = 40
 
     local value_ = 0
+    local min_value_ = 0
+    local max_value_ = 0
     self.on_value_changed = Signal()
+
+    local set_range_ = function(min, max)
+        min_value_ = min
+        max_value_ = max
+        if min >= max then
+            value_ = 0
+            max_value_ = min_value_
+            grabber_.set_visible(false)
+            grabber_.set_size(self.get_size())
+            grabber_.set_position(0, 0)
+        else
+            local x, y = self.get_size()
+            if horizontal_ then
+                local w = math.max(grabber_min_size_, x - max_value_)
+                grabber_.set_size(w, y)
+                grabber_.set_position((x - w) * value_, 0)
+            else
+                local h = math.max(grabber_min_size_, y - max_value_)
+                grabber_.set_size(x, h)
+                grabber_.set_position(0, (y - h) * value_)
+            end
+            grabber_.set_visible(true)
+        end
+        self.on_value_changed.emit(value_)
+    end
 
     ---@param value number
     function self.set_value(value)
-        value = clamp_value(value, 0, 1)
-        if horizontal_ then
-            grabber_.set_pos_x((self.get_size_x() - grabber_.get_size_x()) * value)
-        else
-            grabber_.set_pos_y((self.get_size_y() - grabber_.get_size_y()) * value)
-        end
-        self.on_value_changed.emit(value)
+        value_ = clamp_value(value, 0, 1)
+        set_range_(min_value_, max_value_)
+    end
+
+    function self.set_min_value(value)
+        set_range_(value, max_value_)
+    end
+
+    function self.set_max_value(value)
+        set_range_(min_value_, value)
     end
 
     grabber_.on_dragging.action(function()
@@ -1815,26 +1850,18 @@ function ScrollBar(horizontal, parent_node)
     end)
 
     self.on_pressed.action(function(pressed)
-        if pressed and not grabber_.is_pressed() then
-            local pos_x, pos_y = self.get_absolute_position()
-            if horizontal_ then
-                self.set_value((mouse_x - pos_x) / self.get_size_x())
-            else
-                self.set_value((mouse_y - pos_y) / self.get_size_y())
-            end
-        end
+        -- if pressed and not grabber_.is_pressed() and max_value_ ~= 0 then
+        --     local pos_x, pos_y = self.get_absolute_position()
+        --     if horizontal_ then
+        --         self.set_value((mouse_x - pos_x) / (max_value_ - min_value_))
+        --     else
+        --         self.set_value((mouse_y - pos_y) / (max_value_ - min_value_))
+        --     end
+        -- end
     end)
 
     self.on_size_changed.action(function(x, y)
-        if horizontal_ then
-            grabber_.set_size(50, y)
-            grabber_.set_pos_x((x - grabber_.get_size_x()) * value_)
-        else
-            grabber_.set_size(x, 50)
-            grabber_.set_pos_y((y - grabber_.get_size_y()) * value_)
-        end
-
-        self.on_value_changed.emit(value_)
+        set_range_(min_value_, max_value_)
     end)
 
     grabber_.set_normal_color(ui_color.DimGray)
@@ -1873,10 +1900,6 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
     local item_list_ = VBox(0, 0, 0, 0, content_)
     item_list_.set_content_gutter_width(1)
     item_list_.set_color(ui_color.Gray .. "22")
-
-    self.on_sort_childs.action(function()
-        item_list_.set_size_x(content_.get_size_x())
-    end)
 
     -- local progress_bar_ = ProgressBar(false, ui_color.Black, ui_color.White .. "22", self)
     -- progress_bar_.set_resize_dir(ui_resize_dir.Vertical)
@@ -1963,11 +1986,31 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
         item_list_.set_pos_y(pos)
     end)
 
+    local set_scroll_max = function(y)
+        if y < 0 then
+            y = 0
+        end
+        scroll_bar_.set_max_value(y)
+    end
+
+    item_list_.on_size_changed.action(function(_, y)
+        set_scroll_max(y - content_.get_size_y())
+    end)
+
+    content_.on_size_changed.action(function(_, y)
+        set_scroll_max(item_list_.get_size_y() - y)
+        print(item_list_.get_size_y() - y)
+    end)
+
+    self.on_sort_childs.action(function()
+        item_list_.set_size_x(content_.get_size_x())
+    end)
+
     self.on_filter_items.action(function(column, value)
         if column <= columns_ then
             scroll_bar_.set_value(0)
             item_list_.set_silent(true)
-            
+
             if value == "" then
                 for _, item in ipairs(item_list_.get_childs()) do
                     item.set_visible(true)
@@ -1985,7 +2028,7 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
 
                     ---@cast item_column Label
                     local text = item_column.get_value()
-                    
+
                     local r = string.find(text, value)
                     if r then
                         c = c + 1
@@ -1996,12 +2039,13 @@ function ItemList(pos_x, pos_y, size_x, size_y, parent_node)
                 end
                 self.on_items_changed.emit(rows_, c)
             end
-            
+
             item_list_.set_silent(false)
             item_list_.on_sort_childs.emit()
         end
     end)
 
+    self.on_sort_childs.emit()
     return self
 end
 
@@ -2312,7 +2356,7 @@ local use_test = function()
         local color = ui_color.Black .. "ee"
 
         local input = Input(100, 200, 300, 32)
-        
+
         input.on_value_changed.action(function(text)
             print(text)
         end)
@@ -2416,15 +2460,6 @@ local use_sample = function()
             stat_list.on_filter_items.emit(2, text)
         end)
 
-        local stats_count = Label()
-        stats_count.set_font_size(16)
-        stats_count.set_color(ui_color.DimGray)
-
-        stat_list.on_items_changed.action(function(total, visible)
-            
-            stats_count.set_value(total .. " : " .. visible)
-        end)
-
         local stats_header = stats.get_header_box()
         stats_header.set_color(ui_color.None)
         stats_header.set_content_offset(0, 2, 0, 2, 10)
@@ -2432,8 +2467,24 @@ local use_sample = function()
         stats_header.set_resize_dir(ui_resize_dir.Vertical)
 
         stats_header.add_child(stats_filter)
-        stats_header.add_child(stats_count)
         stats_header.set_visible(true)
+
+        local stats_count = Label()
+        stats_count.set_color(ui_color.Gray)
+
+        stat_list.on_items_changed.action(function(total, visible)
+            stats_count.set_value("total: " .. total ..
+                "    visible: " .. visible)
+        end)
+
+        local stats_footer = stats.get_footer_box()
+        stats_footer.set_color(ui_color.None)
+        stats_footer.set_content_offset(0, 2, 0, 2, 10)
+        stats_footer.set_min_size(300, 0)
+        stats_footer.set_resize_dir(ui_resize_dir.Vertical)
+
+        stats_footer.add_child(stats_count)
+        stats_footer.set_visible(true)
 
         -----------------------------------
         --- Center
