@@ -657,9 +657,29 @@ function Thread()
     local task_ = {}
     local task_count_ = 0
 
+    local task_thread_ = coroutine.create(function()
+        while true do
+            task_[1].callable()
+            table.remove(task_, 1)
+            task_count_ = task_count_ - 1
+            coroutine.yield()
+        end
+    end)
+
     local action_ = {}
     local action_count_ = 0
     local action_index_ = 1
+
+    local action_thread_ = coroutine.create(function()
+        while true do
+            action_[action_index_].callable()
+            action_index_ = action_index_ + 1
+            if action_index_ > action_count_ then
+                action_index_ = 1
+            end
+            coroutine.yield()
+        end
+    end)
 
     function self.task(callable)
         local id = tostring(callable)
@@ -691,18 +711,12 @@ function Thread()
     end
 
     function self.resume()
-        if action_count_ > 0 then
-            action_[action_index_].callable()
-            action_index_ = action_index_ + 1
-            if action_index_ > action_count_ then
-                action_index_ = 1
-            end
+        if task_count_ > 0 and coroutine.status(task_thread_) == "suspended" then
+            coroutine.resume(task_thread_)
         end
 
-        if task_count_ > 0 then
-            task_[1].callable()
-            table.remove(task_, 1)
-            task_count_ = task_count_ - 1
+        if action_count_ > 0 and coroutine.status(action_thread_) == "suspended" then
+            coroutine.resume(action_thread_)
         end
     end
 
@@ -784,6 +798,10 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     self.on_dragging = Signal()
 
     self.on_size_changed = Signal()
+    --- emited when size changed, but can be used with silent changes
+    ---
+    --- usefull for containers, when doing self resize
+    self.on_content_size_changed = Signal()
     self.on_visibility_changed = Signal()
 
     self.on_child_entered_tree = Signal()
@@ -827,7 +845,7 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     ---@param deferred? boolean
     function self.add_child(node, deferred)
         if deferred then
-            on_update.task(function ()
+            on_update.task(function()
                 node.set_parent(self)
             end)
         else
@@ -907,7 +925,9 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
         if ui_set_object_size(id_, type_, x, y) then
             size_x_ = x
             size_y_ = y
-            self.on_size_changed.emit(x, y)
+            if not silent_ then
+                self.on_size_changed.emit(x, y)
+            end
         end
     end
 
@@ -926,7 +946,7 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     function self.set_min_size(x, y)
         min_size_x_ = x
         min_size_y_ = y
-        if parent_ then
+        if parent_ and not silent_ then
             parent_.on_child_order_changed.emit()
         end
     end
@@ -965,7 +985,7 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
     function self.set_resize_dir(value)
         if value ~= resize_dir_ then
             resize_dir_ = value
-            if parent_ then
+            if parent_ and not silent_ then
                 parent_.on_child_order_changed.emit()
             end
         end
@@ -1040,10 +1060,14 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
 
         if value and ui_show_object(id_, type_) then
             visible_ = true
-            self.on_visibility_changed.emit(true)
+            if not silent_ then
+                self.on_visibility_changed.emit(true)
+            end
         elseif not value and ui_hide_object(id_, type_) then
             visible_ = false
-            self.on_visibility_changed.emit(false)
+            if not silent_ then
+                self.on_visibility_changed.emit(false)
+            end
         end
     end
 
@@ -1186,7 +1210,8 @@ function Node(pos_x, pos_y, size_x, size_y, node_id, node_type, parent_node)
         end
     end)
 
-    self.on_size_changed.action(function(_, _)
+    self.on_size_changed.action(function(x, y)
+        self.on_content_size_changed.emit(x, y)
         self.on_child_order_changed.emit()
     end)
 
@@ -1422,9 +1447,9 @@ end
 function Container(pos_x, pos_y, size_x, size_y, parent_node)
     ---@class Container: Panel
     local self = Panel(pos_x, pos_y, size_x, size_y, parent_node)
+    self.set_color(ui_color.None)
 
     self.on_sort_childs = Signal()
-    self.on_pre_sort_childs = Signal()
 
     local content_offset_left_ = 0
     local content_offset_top_ = 0
@@ -1495,10 +1520,7 @@ function Container(pos_x, pos_y, size_x, size_y, parent_node)
     end
 
     self.on_child_order_changed.action(function(_)
-        if not self.is_silent() then
-            self.on_pre_sort_childs.emit()
-            self.on_sort_childs.emit()
-        end
+        self.on_sort_childs.emit()
     end)
 
     return self
@@ -1508,121 +1530,86 @@ end
 ---@param pos_y? number
 ---@param size_x? number
 ---@param size_y? number
+---@param vertical? boolean
 ---@param parent_node? Node
-function HBox(pos_x, pos_y, size_x, size_y, parent_node)
-    ---@class HBox: Container
+function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
+    ---@class BoxContainer: Container
     local self = Container(pos_x, pos_y, size_x, size_y, parent_node)
-
-    self.on_sort_childs.action(function()
-        local x, y = self.get_size()
-        local left, top, right, bottom, gutter = self.get_content_offset()
-
-        local c = 0
-        local c_i = {}
-        local e = 0
-        local e_i = {}
-        local w = 0
-
-        local childs = self.get_childs()
-        for index, child in ipairs(childs) do
-            if child.is_visible() then
-                c = c + 1
-                c_i[c] = index
-
-                local c_resize_dir = child.get_resize_dir()
-                if (c_resize_dir == ui_resize_dir.Both) or (c_resize_dir == ui_resize_dir.Horizontal) then
-                    e = e + 1
-                    e_i[c] = index
-                else
-                    w = w + child.get_min_size_x()
-                    e_i[c] = 0
-                end
-            end
-        end
-
-        if c > 0 then
-            local g_x = (c - 1) * gutter
-            local e_x = (x - w - g_x - left - right) / ((e > 0) and e or 1)
-
-            local offset_x = left
-            local offset_y = top
-            local height = y - top - bottom
-            for i = 1, c do
-                local idx = c_i[i]
-                local child = childs[idx]
-                local width = 0
-                child.set_position(offset_x, offset_y)
-                if e_i[i] > 0 then
-                    child.set_size(e_x, height)
-                    width = e_x
-                else
-                    width = child.get_min_size_x()
-                    child.set_size(width, height)
-                end
-                offset_x = offset_x + width + gutter
-            end
-        end
-    end)
-
-    return self
-end
-
----@param pos_x? number
----@param pos_y? number
----@param size_x? number
----@param size_y? number
----@param parent_node? Node
-function VBox(pos_x, pos_y, size_x, size_y, parent_node)
-    ---@class VBox: Container
-    local self = Container(pos_x, pos_y, size_x, size_y, parent_node)
+    local vertical_ = vertical and true or false
 
     self.on_sort_childs.action(function()
         local x, y = self.get_size()
         local resize_dir = self.get_resize_dir()
         local left, top, right, bottom, gutter = self.get_content_offset()
 
-        local c = 0
-        local c_i = {}
-        local e = 0
-        local e_i = {}
-        local h = 0
+        local visible_count = 0
+        local visible_index = {}
+        local expanded_count = 0
+        local expanded_index = {}
 
-        local min_x = 0
-        local min_y = top + bottom
+        local width = 0
+        local height = 0
+
+        local min_x = left + right
+        local min_y = 0
+
+        if vertical_ then
+            min_x = 0
+            min_y = top + bottom
+        end
 
         local childs = self.get_childs()
         for index, child in ipairs(childs) do
             if child.is_visible() then
-                c = c + 1
-                c_i[c] = index
+                visible_count = visible_count + 1
+                visible_index[visible_count] = index
+                expanded_index[visible_count] = 0
 
-                local c_min_x, c_min_y = child.get_min_size()
-                min_x = math.max(min_x, c_min_x)
-                min_y = min_y + c_min_y + gutter
+                local child_min_x, child_min_y = child.get_min_size()
+                local child_resize_dir = child.get_resize_dir()
+
+                if vertical_ then
+                    min_x = math.max(min_x, child_min_x + left + right)
+                    min_y = min_y + child_min_y
+                    if visible_count > 1 then
+                        min_y = min_y + gutter
+                    end
+
+                    if (child_resize_dir == ui_resize_dir.Both) or (child_resize_dir == ui_resize_dir.Vertical) then
+                        expanded_count = expanded_count + 1
+                        expanded_index[visible_count] = index
+                    end
+                else
+                    min_x = min_x + child_min_x
+                    min_y = math.max(min_y, child_min_y + top + bottom)
+                    if visible_count > 1 then
+                        min_x = min_x + gutter
+                    end
+
+                    if (child_resize_dir == ui_resize_dir.Both) or (child_resize_dir == ui_resize_dir.Horizontal) then
+                        expanded_count = expanded_count + 1
+                        expanded_index[visible_count] = index
+                    end
+                end
 
                 if resize_dir == ui_resize_dir.None then
+                    self.set_silent(true)
+
                     local x_less = x < min_x
                     local y_less = y < min_y
 
                     if x_less and y_less then
                         self.set_size(min_x, min_y)
-                        return
+                        self.on_content_size_changed.emit(min_x, min_y)
                     elseif y_less then
                         self.set_size_y(min_y)
-                        return
+                        self.on_content_size_changed.emit(x, min_y)
                     elseif x_less then
                         self.set_size_x(min_x)
-                        return
+                        self.on_content_size_changed.emit(min_x, y)
                     end
-                end
 
-                local c_resize_dir = child.get_resize_dir()
-                if (c_resize_dir == ui_resize_dir.Both) or (c_resize_dir == ui_resize_dir.Vertical) then
-                    e = e + 1
-                    e_i[c] = index
-                else
-                    h = h + c_min_y
-                    e_i[c] = 0
+                    self.set_silent(false)
                 end
             end
         end
@@ -1630,48 +1617,120 @@ function VBox(pos_x, pos_y, size_x, size_y, parent_node)
         local x_greater = x > min_x
         local y_greater = y > min_y
 
-        min_x = min_x + left + right
-        x = math.max(min_x, x)
-        y = math.max(min_y, y)
+        if resize_dir == ui_resize_dir.None then
+            self.set_silent(true)
 
-        if c > 0 then
-            local g_y = (c - 1) * gutter
-            local e_y = (y - h - g_y - top - bottom) / ((e > 0) and e or 1)
+            if x_greater and y_greater then
+                x_greater = false
+                y_greater = false
+                self.set_size(min_x, min_y)
+                self.on_content_size_changed.emit(min_x, min_y)
+            elseif x_greater then
+                x_greater = false
+                self.set_size_x(min_x)
+                self.on_content_size_changed.emit(min_x, y)
+            elseif y_greater then
+                y_greater = false
+                self.set_size_y(min_y)
+                self.on_content_size_changed.emit(x, min_y)
+            end
 
-            local offset_x = left
-            local offset_y = top
-            local width = x - left - right
-            for i = 1, c do
-                local idx = c_i[i]
-                local child = childs[idx]
-                local height = 0
-                child.set_position(offset_x, offset_y)
-                if e_i[i] > 0 then
-                    child.set_size(width, e_y)
-                    height = e_y
-                else
-                    height = child.get_min_size_y()
-                    child.set_size(width, height)
+            self.set_silent(false)
+        end
+
+        if visible_count > 0 then
+            local gutters = (visible_count - 1) * gutter
+            local expand = 0
+
+            if vertical_ then
+                if y_greater and expanded_count > 0 then
+                    expand = (y - min_y - gutters) / expanded_count
                 end
 
+                local offset_x = left
+                local offset_y = top
+                local child_width = math.max(x, min_x) - left - right
 
-                offset_y = offset_y + height + gutter
+                for i, index in ipairs(visible_index) do
+                    local child = childs[index]
+                    local child_x, child_y = child.get_size()
+                    local child_min_x, child_min_y = child.get_min_size()
+                    -- child.set_silent(true)
+
+                    child.set_position(offset_x, offset_y)
+                    local child_height
+                    if expanded_index[i] > 0 then
+                        child_height = child_min_y + expand
+                    else
+                        child_height = child_min_y
+                    end
+
+                    if (child_y ~= child_height) or (child_x ~= child_width) then
+                        child.set_size(child_width, child_height)
+                    end
+
+                    -- child.set_silent(false)
+                    offset_y = offset_y + child_height + gutter
+                end
+            else
+                if x_greater and expanded_count > 0 then
+                    expand = (x - min_x) / expanded_count
+                end
+
+                local offset_x = left
+                local offset_y = top
+                local child_height = math.max(y, min_y) - top - bottom
+
+                for i, index in ipairs(visible_index) do
+                    local child = childs[index]
+                    local child_x, child_y = child.get_size()
+                    local child_min_x, child_min_y = child.get_min_size()
+                    -- child.set_silent(true)
+
+                    child.set_position(offset_x, offset_y)
+                    local child_width
+                    if expanded_index[i] > 0 then
+                        child_width = child_min_x + expand
+                    else
+                        child_width = child_min_x
+                    end
+
+                    if (child_y ~= child_height) or (child_x ~= child_width) then
+                        child.set_size(child_width, child_height)
+                    end
+
+                    -- child.set_silent(false)
+                    offset_x = offset_x + child_width + gutter
+                end
             end
         end
 
-        if resize_dir == ui_resize_dir.None then
-            if x_greater and y_greater then
-                self.set_size(min_x, min_y)
-                return
-            elseif y_greater then
-                self.set_size_y(min_y)
-                return
-            elseif x_greater then
-                self.set_size_x(min_x)
-                return
-            end
-        end
+        
     end)
+
+    return self
+end
+
+---@param pos_x? number
+---@param pos_y? number
+---@param size_x? number
+---@param size_y? number
+---@param parent_node? Node
+function HBoxContainer(pos_x, pos_y, size_x, size_y, parent_node)
+    ---@class HBoxContainer: BoxContainer
+    local self = BoxContainer(pos_x, pos_y, size_x, size_y, false, parent_node)
+
+    return self
+end
+
+---@param pos_x? number
+---@param pos_y? number
+---@param size_x? number
+---@param size_y? number
+---@param parent_node? Node
+function VBoxContainer(pos_x, pos_y, size_x, size_y, parent_node)
+    ---@class VBoxContainer: BoxContainer
+    local self = BoxContainer(pos_x, pos_y, size_x, size_y, true, parent_node)
 
     return self
 end
@@ -1682,32 +1741,29 @@ end
 ---@param size_y number
 ---@param title? string
 function Window(pos_x, pos_y, size_x, size_y, title)
-    ---@class Window: VBox
-    local self = VBox(pos_x, pos_y, size_x, size_y)
+    ---@class Window: VBoxContainer
+    local self = VBoxContainer(pos_x, pos_y, size_x, size_y)
+    self.set_color(ui_color.Black .. "ee")
 
-    local header_ = HBox(0, 0, 0, 32, self)
+    local header_ = HBoxContainer(0, 0, 0, 32, self)
     header_.set_resize_dir(ui_resize_dir.Horizontal)
-    header_.set_color(ui_color.None)
     header_.set_content_offset(10, 0, 0, 0, 10)
 
-    local header_box_ = HBox()
-    header_box_.set_color(ui_color.None)
+    local header_box_ = HBoxContainer()
     header_box_.set_visible(false)
     header_.add_child(header_box_)
 
-    local content_ = Container(0, 0, 0, 0, self)
+    local content_ = Panel(0, 0, 0, 0, self)
     content_.set_color(ui_color.None)
 
     ---@type Node
     local content_child_
 
-    local footer_ = HBox(0, 0, 0, 24, self)
+    local footer_ = HBoxContainer(0, 0, 0, 24, self)
     footer_.set_resize_dir(ui_resize_dir.Horizontal)
-    footer_.set_color(ui_color.None)
     footer_.set_content_offset(10, 0, 0, 0, 10)
 
-    local footer_box_ = HBox()
-    footer_box_.set_color(ui_color.None)
+    local footer_box_ = HBoxContainer()
     footer_.add_child(footer_box_)
 
     local title_ = Text()
@@ -1781,13 +1837,15 @@ function Window(pos_x, pos_y, size_x, size_y, title)
     resize_.on_pressed.action(function(pressed)
         if not pressed then
             if content_child_ then
-                content_child_.set_size(content_.get_size())
+                content_child_.set_size(content_.get_min_size())
             end
         end
     end)
 
-    content_.on_sort_childs.action(function()
-
+    self.on_size_changed.action(function(x, y)
+        content_.set_min_size(
+            x, y - header_.get_size_y() - footer_.get_size_y()
+        )
     end)
 
     ---@param node Node
@@ -1795,7 +1853,7 @@ function Window(pos_x, pos_y, size_x, size_y, title)
         if not content_child_ then
             node.set_parent(content_)
             node.set_position(0, 0)
-            node.set_size(content_.get_size())
+            node.set_size(content_.get_min_size())
             content_child_ = node
         else
             print("Only one custom child element is allowed per Window.")
@@ -1879,48 +1937,6 @@ function CheckBox(pos_x, pos_y, size, parent_node)
     self.set_toggle_mode(true)
     self.set_align(ui_anchor.MiddleCenter)
     self.set_mouse_filter(true)
-    return self
-end
-
----@param horizontal? boolean
----@param background_color? ui_color|string
----@param progress_color? ui_color|string
----@param parent_node? Node
-function ProgressBar(horizontal, background_color, progress_color, parent_node)
-    local background_color_ = background_color or ui_color.Black
-    local progress_color_ = progress_color or ui_color.DimGray
-    local horizontal_ = horizontal and true or false
-
-    ---@class ProgressBar: Panel
-    local self = Panel(0, 0, 0, 0, parent_node)
-    local line_ = Panel(0, 0, 0, 0, self)
-
-    local value_ = 0
-
-    function self.set_value(value)
-        value_ = clamp_value(value, 0, 1)
-        if horizontal_ then
-            line_.set_size_x(self.get_size_x() * value)
-        else
-            line_.set_size_y(self.get_size_y() * value)
-        end
-    end
-
-    ---@param hexcolor ui_color|string
-    function self.set_value_color(hexcolor)
-        line_.set_color(hexcolor)
-    end
-
-    self.on_size_changed.action(function(x, y)
-        if horizontal_ then
-            line_.set_size(value_ / x, y)
-        else
-            line_.set_size(x, value_ / y)
-        end
-    end)
-
-    self.set_color(background_color_)
-    line_.set_color(progress_color_)
     return self
 end
 
@@ -2036,8 +2052,8 @@ end
 ---@param size_x? number
 ---@param size_y? number
 ---@param parent_node? Node
-function ScrollBox(pos_x, pos_y, size_x, size_y, parent_node)
-    ---@class ScrollBox: Container
+function ScrollContainer(pos_x, pos_y, size_x, size_y, parent_node)
+    ---@class ScrollContainer: Container
     local self = Container(pos_x, pos_y, size_x, size_y, parent_node)
     self.set_color(ui_color.None)
 
@@ -2050,7 +2066,7 @@ function ScrollBox(pos_x, pos_y, size_x, size_y, parent_node)
     local content_
     local scroll_size_ = 6
 
-    self.on_content_size_changed = Signal()
+    local on_content_size_changed = Signal()
 
     self.on_sort_childs.action(function()
         local w, h = self.get_size()
@@ -2082,7 +2098,7 @@ function ScrollBox(pos_x, pos_y, size_x, size_y, parent_node)
         end
     end)
 
-    self.on_content_size_changed.action(function(x, y)
+    on_content_size_changed.action(function(x, y)
         x = (x < 0) and 0 or x
         y = (y < 0) and 0 or y
         scroll_x_.set_max_value(x - panel_.get_size_x())
@@ -2095,8 +2111,8 @@ function ScrollBox(pos_x, pos_y, size_x, size_y, parent_node)
             node.set_parent(panel_)
             node.set_position(0, 0)
             content_ = node
-            content_.on_size_changed.action(function(x, y)
-                self.on_content_size_changed.emit(x, y)
+            content_.on_content_size_changed.action(function(x, y)
+                on_content_size_changed.emit(x, y)
             end)
         else
             print("Only one custom child element is allowed per ScrollBox.")
@@ -2515,26 +2531,41 @@ function PlayerBuffs(player)
     buffs.set_visible(false)
     buffs.set_size_y(400)
 
-    local buff_box = ScrollBox(0, 0, 0, 0, buffs)
-    local buff_list = VBox(0, 0, 0, 0, buff_box)
+    local buff_box = ScrollContainer(0, 0, 0, 0, buffs)
+    local buff_list = VBoxContainer(0, 0, 0, 0, buff_box)
     buff_list.set_resize_dir(ui_resize_dir.None)
     buff_list.set_color(ui_color.Gray .. "22")
     buff_list.set_content_gutter_width(1)
 
-    for i = 1, 100 do
-        local buff_info = HBox(0, 0, 1000, 32)
-        buff_info.set_content_offset(10, 4, 10, 4, 10)
+    local start = os.clock()
+    for i = 1, 200 do
+        on_update.task(function()
+            local buff_info = HBoxContainer(0, 0, 1000, 32)
+            buff_info.set_content_offset(10, 4, 10, 4, 10)
+            buff_info.set_color(ui_color.Black .. "ee")
 
-        local label = Label(0, 0, 0, 0, "Label " .. i, 12, buff_info)
-        
-        buff_list.add_child(buff_info, true)
+            local label = Label(0, 0, 0, 0, "Label " .. i)
+            buff_info.add_child(label)
+
+            buff_list.add_child(buff_info)
+        end)
     end
 
-    -- for index, value in ipairs(buff_list.get_childs()) do
-    --     if index > 10 then
-    --         value.set_visible(false)
-    --     end
-    -- end
+    on_update.task(function()
+        print("child count " .. buff_list.get_child_count())
+        print("ellapsed time " .. os.clock() - start)
+    end)
+
+    on_update.task(function()
+        for index, value in ipairs(buff_list.get_childs()) do
+            if index > 4 then
+                value.set_silent(true)
+                value.set_visible(false)
+                value.set_silent(false)
+            end
+        end
+        buff_list.on_sort_childs.emit()
+    end)
 
     return buffs
 end
