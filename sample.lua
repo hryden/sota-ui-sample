@@ -61,9 +61,9 @@ local ui_color = {
     DarkGray = "#101010",
     DimGray = "#696969",
     Onyx = "#353935",
+    Blue = "#0078D4",
     BlueGray = "#7393B3",
     SteelBlue = "#4682B4",
-    CornflowerBlue = "#6495ED",
     Gold = "#FFD700",
     Oxblood = "#4A0404"
 }
@@ -711,12 +711,12 @@ function Thread()
     end
 
     function self.resume()
-        if task_count_ > 0 and coroutine.status(task_thread_) == "suspended" then
-            coroutine.resume(task_thread_)
-        end
-
         if action_count_ > 0 and coroutine.status(action_thread_) == "suspended" then
             coroutine.resume(action_thread_)
+        end
+
+        if task_count_ > 0 and coroutine.status(task_thread_) == "suspended" then
+            coroutine.resume(task_thread_)
         end
     end
 
@@ -1538,7 +1538,9 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
     local vertical_ = vertical and true or false
 
     self.on_sort_childs.action(function()
+        self.set_silent(true)
         local x, y = self.get_size()
+        local w, h = self.get_min_size()
         local resize_dir = self.get_resize_dir()
         local left, top, right, bottom, gutter = self.get_content_offset()
 
@@ -1546,9 +1548,6 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
         local visible_index = {}
         local expanded_count = 0
         local expanded_index = {}
-
-        local width = 0
-        local height = 0
 
         local min_x = left + right
         local min_y = 0
@@ -1592,12 +1591,9 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
                     end
                 end
 
+                local x_less = x < min_x
+                local y_less = y < min_y
                 if resize_dir == ui_resize_dir.None then
-                    self.set_silent(true)
-
-                    local x_less = x < min_x
-                    local y_less = y < min_y
-
                     if x_less and y_less then
                         self.set_size(min_x, min_y)
                         self.on_content_size_changed.emit(min_x, min_y)
@@ -1608,8 +1604,16 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
                         self.set_size_x(min_x)
                         self.on_content_size_changed.emit(min_x, y)
                     end
-
-                    self.set_silent(false)
+                elseif resize_dir == ui_resize_dir.Horizontal then
+                    if y_less then
+                        self.set_size_y(min_y)
+                        self.on_content_size_changed.emit(x, min_y)
+                    end
+                elseif resize_dir == ui_resize_dir.Vertical then
+                    if x_less then
+                        self.set_size_x(min_x)
+                        self.on_content_size_changed.emit(min_x, y)
+                    end
                 end
             end
         end
@@ -1618,8 +1622,6 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
         local y_greater = y > min_y
 
         if resize_dir == ui_resize_dir.None then
-            self.set_silent(true)
-
             if x_greater and y_greater then
                 x_greater = false
                 y_greater = false
@@ -1634,8 +1636,20 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
                 self.set_size_y(min_y)
                 self.on_content_size_changed.emit(x, min_y)
             end
-
-            self.set_silent(false)
+        elseif resize_dir == ui_resize_dir.Horizontal then
+            h = math.max(min_y, h)
+            if y > h then
+                y_greater = false
+                self.set_size_y(h)
+                self.on_content_size_changed.emit(x, h)
+            end
+        elseif resize_dir == ui_resize_dir.Vertical then
+            w = math.max(min_x, w)
+            if x > w then
+                x_greater = false
+                self.set_size_x(w)
+                self.on_content_size_changed.emit(w, y)
+            end
         end
 
         if visible_count > 0 then
@@ -1705,7 +1719,7 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
             end
         end
 
-        
+        self.set_silent(false)
     end)
 
     return self
@@ -1940,13 +1954,58 @@ function CheckBox(pos_x, pos_y, size, parent_node)
     return self
 end
 
+---@param vertical? boolean
+---@param parent_node? Node
+---@return ProgressBar
+function ProgressBar(vertical, parent_node)
+    ---@class ProgressBar: Panel
+    local self = Panel(0, 0, 0, 0, parent_node)
+    self.set_mask(false)
+
+    local line_ = Panel(0, 0, 0, 0, self)
+
+    local vertical_ = vertical and true or false
+    local value_ = 0
+
+    function self.set_value(value)
+        value_ = clamp_value(value, 0, 1)
+        local x, y = self.get_size()
+        if vertical_ then
+            line_.set_size_y(y * value_)
+        else
+            line_.set_size_x(x * value_)
+        end
+    end
+
+    ---@param value number
+    function self.set_line_volume(value)
+        if vertical_ then
+            line_.set_size_x(value)
+        else
+            line_.set_size_y(value)
+        end
+    end
+
+    self.set_line_color = line_.set_color
+
+    self.on_size_changed.action(function(x, y)
+        if vertical_ then
+            line_.set_size_y(y * value_)
+        else
+            line_.set_size_x(x * value_)
+        end
+    end)
+
+    return self
+end
+
 ---@param horizontal? boolean
 ---@param parent_node? Node
 function ScrollBar(horizontal, parent_node)
     local horizontal_ = horizontal and true or false
 
-    ---@class ScrollBar: Image
-    local self = Image(0, 0, 0, 0, nil, parent_node)
+    ---@class ScrollBar: Panel
+    local self = Panel(0, 0, 0, 0, parent_node)
     local grabber_ = Image(0, 0, 0, 0, nil, self)
     local grabber_min_size_ = 40
 
@@ -2019,17 +2078,6 @@ function ScrollBar(horizontal, parent_node)
         end
     end)
 
-    self.on_pressed.action(function(pressed)
-        -- if pressed and not grabber_.is_pressed() and max_value_ ~= 0 then
-        --     local pos_x, pos_y = self.get_absolute_position()
-        --     if horizontal_ then
-        --         self.set_value((mouse_x - pos_x) / (max_value_ - min_value_))
-        --     else
-        --         self.set_value((mouse_y - pos_y) / (max_value_ - min_value_))
-        --     end
-        -- end
-    end)
-
     self.on_size_changed.action(function(x, y)
         set_range_(min_value_, max_value_)
     end)
@@ -2074,6 +2122,16 @@ function ScrollContainer(pos_x, pos_y, size_x, size_y, parent_node)
         local y = h - scroll_size_
 
         panel_.set_size(x, y)
+        if content_ then
+            local content_resize_dir = content_.get_resize_dir()
+            if content_resize_dir == ui_resize_dir.Both then
+                content_.set_size(x, y)
+            elseif content_resize_dir == ui_resize_dir.Horizontal then
+                content_.set_size_x(x)
+            elseif content_resize_dir == ui_resize_dir.Vertical then
+                content_.set_size_y(y)
+            end
+        end
 
         scroll_y_.set_size(scroll_size_, y)
         scroll_y_.set_pos_x(x)
@@ -2114,6 +2172,7 @@ function ScrollContainer(pos_x, pos_y, size_x, size_y, parent_node)
             content_.on_content_size_changed.action(function(x, y)
                 on_content_size_changed.emit(x, y)
             end)
+            self.on_sort_childs.emit()
         else
             print("Only one custom child element is allowed per ScrollBox.")
             node.destroy()
@@ -2407,167 +2466,181 @@ function Player()
 end
 
 ---@param player Player
----@param stat_count integer
-function PlayerStats(player, stat_count)
+function PlayerStats(player)
     ---@class PlayerStats: Window
     local self = Window(500, 100, 500, 200, "Stats")
     self.set_visible(false)
     self.set_size_y(400)
 
-    -- local stat_list = ItemList(0, 0, 0, 0, self)
+    self.on_items_ready = Signal()
+    self.on_items_changed = Signal()
 
-    -- ---@param index integer
-    -- ---@param node Node
-    -- local stat_list_item = function(index, node)
-    --     local idx = Label(0, 0, 32, 0, tostring(index), 12, node)
-    --     idx.set_resize_dir(ui_resize_dir.Vertical)
+    local stats_box = ScrollContainer(0, 0, 0, 0, self)
+    local stats_list = VBoxContainer(0, 0, 0, 0, stats_box)
+    stats_list.set_resize_dir(ui_resize_dir.Horizontal)
+    stats_list.set_color(ui_color.Gray .. "22")
+    stats_list.set_content_gutter_width(1)
 
-    --     local name = Label(0, 0, 0, 0, player.stat_name(index), 12, node)
+    function self.init()
+        local clock = os.clock()
+        local stat_count = 50
+        -- local stat_count = player.stat_count()
+        for i = 1, stat_count do
+            on_update.task(function()
+                local item = HBoxContainer(0, 0, 0, 24)
+                item.set_resize_dir(ui_resize_dir.Horizontal)
+                item.set_content_offset(10, 0, 10, 0, 10)
+                item.set_color(ui_color.Black .. "ee")
 
-    --     local value = Label(0, 0, 120, 0, tostring(player.stat_value(index)), 12, node)
-    --     value.set_resize_dir(ui_resize_dir.Vertical)
+                local item_index = Label(0, 0, 32, 0, tostring(i), 12, item)
+                item_index.set_resize_dir(ui_resize_dir.Vertical)
 
-    --     local check = CheckBox(0, 0, 24, node)
-    --     check.set_resize_dir(ui_resize_dir.Vertical)
+                local item_name = Label(0, 0, 0, 0, player.stat_name(i), 12, item)
 
-    --     check.on_toggled.action(function(toggled)
-    --         player.stat_watch(index, toggled)
-    --     end)
+                local item_value = Label(0, 0, 120, 0, tostring(player.stat_value(i)), 12, item)
+                item_value.set_resize_dir(ui_resize_dir.Vertical)
 
-    --     if player.stat_watch_enabled(index) then
-    --         check.on_pressed.emit(true)
-    --     end
+                local item_check = CheckBox(0, 0, 24, item)
+                item_check.set_resize_dir(ui_resize_dir.Vertical)
 
-    --     return node
-    -- end
+                item_check.on_toggled.action(function(toggled)
+                    player.stat_watch(i, toggled)
+                end)
 
-    -- function self.init()
-    --     stat_list.add_items(stat_count, stat_list_item)
-    -- end
+                if player.stat_watch_enabled(i) then
+                    item_check.on_pressed.emit(true)
+                end
 
-    -- local stats_filter = Input(0, 0, 200, 28)
-    -- stats_filter.set_resize_dir(ui_resize_dir.Node)
-    -- stats_filter.set_bg_color(ui_color.Black)
-    -- stats_filter.set_color(ui_color.White)
-    -- stats_filter.set_placeholder("filter by name ...")
-    -- stats_filter.set_font_size(12)
-    -- stats_filter.set_readonly(true)
+                stats_list.add_child(item)
+                self.on_items_changed.emit(i, stat_count)
+            end)
+        end
 
-    -- stat_list.on_ready.action(function()
-    --     stats_filter.set_readonly(false)
-    -- end)
+        on_update.task(function()
+            print("PlayerStats Ready: " .. os.clock() - clock)
+            self.on_items_ready.emit()
+        end)
+    end
 
-    -- stats_filter.on_value_changed.action(function(text)
-    --     stat_list.on_filter_items.emit(2, text)
-    -- end)
+    local stats_filter = Input(0, 0, 200, 28)
+    stats_filter.set_resize_dir(ui_resize_dir.Node)
+    stats_filter.set_bg_color(ui_color.Black)
+    stats_filter.set_color(ui_color.White)
+    stats_filter.set_placeholder("filter by name ...")
+    stats_filter.set_font_size(12)
+    stats_filter.set_readonly(true)
 
-    -- local stats_header = self.get_header_box()
-    -- stats_header.set_content_offset(0, 2, 0, 2, 10)
-    -- stats_header.set_min_size(250, 0)
-    -- stats_header.set_resize_dir(ui_resize_dir.Vertical)
+    self.on_items_ready.action(function()
+        stats_filter.set_readonly(false)
+    end)
 
-    -- local stats_total = Label()
-    -- stats_total.set_color(ui_color.DimGray)
-    -- stats_total.set_align(ui_anchor.MiddleRight)
+    stats_filter.on_value_changed.action(function(text)
+        if text == "" then
+            for _, child in ipairs(stats_list.get_childs()) do
+                child.set_silent(true)
+                child.set_visible(true)
+                child.set_silent(false)
+            end
+            stats_list.on_sort_childs.emit()
+        else
+            --- validate pattern
+            if not pcall(string.find, "", text) then
+                return
+            end
 
-    -- local stats_visible = Label()
-    -- stats_visible.set_color(ui_color.DimGray)
-    -- stats_visible.set_align(ui_anchor.MiddleRight)
+            for _, child in ipairs(stats_list.get_childs()) do
+                local value = child.get_child(2).get_value()
+                child.set_silent(true)
+                if string.find(value, text) then
+                    child.set_visible(true)
+                else
+                    child.set_visible(false)
+                end
+                child.set_silent(false)
+            end
+            stats_list.on_sort_childs.emit()
+        end
+    end)
 
-    -- stat_list.on_items_changed.action(function(total, visible)
-    --     stats_total.set_value(total .. "  total")
-    --     stats_visible.set_value(visible)
-    -- end)
+    local stats_header = self.get_header_box()
+    stats_header.set_content_offset(0, 2, 0, 2, 10)
+    stats_header.set_min_size(250, 0)
+    stats_header.set_resize_dir(ui_resize_dir.Vertical)
 
-    -- local stats_check = Text()
-    -- stats_check.set_mouse_filter(true)
-    -- stats_check.set_align(ui_anchor.MiddleLeft)
-    -- stats_check.set_normal_color(ui_color.DimGray)
-    -- stats_check.set_hovered_color(ui_color.White)
-    -- stats_check.set_pressed_color(ui_color.DimGray)
+    local stats_total = Label()
+    stats_total.set_color(ui_color.DimGray)
+    stats_total.set_align(ui_anchor.MiddleRight)
 
-    -- stats_check.on_pressed.action(function(pressed)
-    --     if pressed then
-    --         local list = player.stat_check()
-    --         local count = #list
-    --         for i = 1, count do
-    --             local checkbox = stat_list.get_item_column(list[1], 4)
-    --             ---@cast checkbox CheckBox
-    --             if checkbox then
-    --                 checkbox.on_pressed.emit(true)
-    --             end
-    --         end
-    --     end
-    -- end)
+    local stats_visible = Label()
+    stats_visible.set_color(ui_color.DimGray)
+    stats_visible.set_align(ui_anchor.MiddleRight)
 
-    -- player.on_stat_check_changed.action(function(checked)
-    --     stats_check.set_value("check  " .. checked)
-    -- end)
+    self.on_items_changed.action(function(ready, total)
+        stats_total.set_value(total .. "  total")
+        stats_visible.set_value(ready)
+    end)
 
-    -- player.on_stat_check_changed.emit(#player.stat_check())
+    local stats_check = Text()
+    stats_check.set_mouse_filter(true)
+    stats_check.set_align(ui_anchor.MiddleLeft)
+    stats_check.set_normal_color(ui_color.DimGray)
+    stats_check.set_hovered_color(ui_color.White)
+    stats_check.set_pressed_color(ui_color.DimGray)
 
-    -- local stats_footer = self.get_footer_box()
-    -- stats_footer.set_content_offset(0, 2, 0, 2, 40)
+    stats_check.on_pressed.action(function(pressed)
+        if pressed then
+            local list = player.stat_check()
+            local count = #list
+            for i = 1, count do
+            end
+        end
+    end)
 
-    -- stats_header.add_child(stats_visible)
-    -- stats_header.add_child(stats_filter)
-    -- stats_header.set_visible(true)
+    player.on_stat_check_changed.action(function(checked)
+        stats_check.set_value("check  " .. checked)
+    end)
 
-    -- stats_footer.add_child(stats_total)
-    -- stats_footer.add_child(stats_check)
+    player.on_stat_check_changed.emit(#player.stat_check())
 
-    -- on_redraw.action(function(delta)
-    --     for _, v in ipairs(player.stat_check()) do
-    --         stat_list.set_item_value(v, 3, player.stat_value(v))
-    --     end
-    -- end, 1)
+    local stats_footer = self.get_footer_box()
+    stats_footer.set_content_offset(0, 2, 0, 2, 40)
+
+    stats_header.add_child(stats_visible)
+    stats_header.add_child(stats_filter)
+    stats_header.set_visible(true)
+
+    stats_footer.add_child(stats_total)
+    stats_footer.add_child(stats_check)
+
+    on_redraw.action(function(delta)
+        -- for _, v in ipairs(player.stat_check()) do
+        --     stat_list.set_item_value(v, 3, player.stat_value(v))
+        -- end
+    end, 1)
 
     return self
 end
 
 ---@param player Player
 function PlayerBuffs(player)
-    local buffs = Window(500, 100, 500, 200, "Buffs")
-    buffs.set_visible(false)
-    buffs.set_size_y(400)
+    ---@class PlayerBuffs: Window
+    local self = Window(500, 100, 500, 200, "Buffs")
+    self.set_visible(false)
+    self.set_size_y(400)
 
-    local buff_box = ScrollContainer(0, 0, 0, 0, buffs)
+    self.on_items_ready = Signal()
+    self.on_items_changed = Signal()
+
+    local buff_box = ScrollContainer(0, 0, 0, 0, self)
     local buff_list = VBoxContainer(0, 0, 0, 0, buff_box)
     buff_list.set_resize_dir(ui_resize_dir.None)
     buff_list.set_color(ui_color.Gray .. "22")
     buff_list.set_content_gutter_width(1)
 
-    local start = os.clock()
-    for i = 1, 200 do
-        on_update.task(function()
-            local buff_info = HBoxContainer(0, 0, 1000, 32)
-            buff_info.set_content_offset(10, 4, 10, 4, 10)
-            buff_info.set_color(ui_color.Black .. "ee")
-
-            local label = Label(0, 0, 0, 0, "Label " .. i)
-            buff_info.add_child(label)
-
-            buff_list.add_child(buff_info)
-        end)
+    function self.init()
     end
 
-    on_update.task(function()
-        print("child count " .. buff_list.get_child_count())
-        print("ellapsed time " .. os.clock() - start)
-    end)
-
-    on_update.task(function()
-        for index, value in ipairs(buff_list.get_childs()) do
-            if index > 4 then
-                value.set_silent(true)
-                value.set_visible(false)
-                value.set_silent(false)
-            end
-        end
-        buff_list.on_sort_childs.emit()
-    end)
-
-    return buffs
+    return self
 end
 
 -------------------------------------------
@@ -2748,28 +2821,32 @@ local use_sample = function()
         -----------------------------------
         --- Taskbar
 
-        local taskbar = HBox(0, 0, screen_size_x, 24)
+        local taskbar = HBoxContainer(0, 0, screen_size_x, 24)
         taskbar.set_color(ui_color.Black .. "fc")
         taskbar.set_content_offset(10, 2, 10, 2, 10)
 
-        local taskbar_left = HBox(0, 0, 0, 0, taskbar)
+        local taskbar_left = HBoxContainer(0, 0, 0, 0, taskbar)
         taskbar_left.set_color(ui_color.None)
         taskbar_left.set_content_gutter_width(10)
 
-        local taskbar_center = HBox(0, 0, 400, 0, taskbar)
+        local taskbar_center = HBoxContainer(0, 0, 400, 0, taskbar)
         taskbar_center.set_resize_dir(ui_resize_dir.Vertical)
         taskbar_center.set_color(ui_color.None)
 
-        local taskbar_right = HBox(0, 0, 0, 0, taskbar)
+        local taskbar_right = HBoxContainer(0, 0, 0, 0, taskbar)
         taskbar_right.set_color(ui_color.None)
         taskbar_right.add_spacer()
 
-        local taskbar_border = Panel(0, 24, screen_size_x, 1)
-        taskbar_border.set_color(ui_color.White .. "22")
+        local progress_bar = ProgressBar()
+        progress_bar.set_color(ui_color.White .. "22")
+        progress_bar.set_line_color(ui_color.Blue)
+        progress_bar.set_line_volume(2)
+        progress_bar.set_size(screen_size_x, 1)
+        progress_bar.set_pos_y(24)
 
         on_screen_changed.action(function()
             taskbar.set_size_x(screen_size_x)
-            taskbar_border.set_size_x(screen_size_x)
+            progress_bar.set_size_x(screen_size_x)
         end)
 
         -----------------------------------
@@ -2784,21 +2861,27 @@ local use_sample = function()
         stats_button.set_pressed_color(ui_color.Gray)
         stats_button.set_toggle_mode(true)
 
-        local stat_count = 50
-        -- local stat_count = player.stat_count()
-        local player_stats = PlayerStats(player, stat_count)
+        local player_stats = PlayerStats(player)
         local player_stats_init = true
 
         stats_button.on_toggled.action(function(pressed)
             player_stats.set_visible(pressed)
             if player_stats_init and pressed then
                 player_stats_init = false
-                -- player_stats.init()
+                player_stats.init()
             end
         end)
 
         player_stats.on_close.action(function()
             stats_button.on_pressed.emit(true)
+        end)
+
+        player_stats.on_items_ready.action(function()
+            progress_bar.set_value(0)
+        end)
+
+        player_stats.on_items_changed.action(function(ready, total)
+            progress_bar.set_value(ready / total)
         end)
 
         local buffs_button = Button(0, 0, 40, 0, "Buffs", 12, taskbar_left)
@@ -2807,19 +2890,20 @@ local use_sample = function()
         buffs_button.set_pressed_color(ui_color.Gray)
         buffs_button.set_toggle_mode(true)
 
-        local buff_count = 50
-        -- local buff_count = player.buff_count()
-        local player_buffs = PlayerBuffs(player, buff_count)
+        local player_buffs = PlayerBuffs(player)
+        local player_buffs_init = true
 
         buffs_button.on_toggled.action(function(pressed)
             player_buffs.set_visible(pressed)
+            if player_buffs_init and pressed then
+                player_buffs_init = false
+                player_buffs.init()
+            end
         end)
 
         player_buffs.on_close.action(function()
             buffs_button.on_pressed.emit(true)
         end)
-
-        buffs_button.on_pressed.emit(true)
 
         -----------------------------------
         --- Center
@@ -2896,5 +2980,5 @@ local use_sample = function()
 end
 
 --- comment, if you don't want to use
-use_test()
--- use_sample()
+-- use_test()
+use_sample()
