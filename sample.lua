@@ -1545,6 +1545,11 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
     --     resized_ = 0
     -- end)
 
+    --- TODO: overide get_min_size
+    -- function self.get_min_size()
+
+    -- end
+
     self.on_sort_childs.action(function()
         self.set_silent(true)
         local x, y = self.get_size()
@@ -2378,6 +2383,22 @@ function Player()
         return stat_check_
     end
 
+    function self.buff_count()
+        return get_player_buff_count()
+    end
+
+    function self.buff_name(index)
+        return get_player_buff_name(index)
+    end
+
+    function self.buff_descr(index)
+        return get_player_buff_descr(index)
+    end
+
+    function self.buff_time(index)
+        return get_player_buff_time(index)
+    end
+
     function self.buff_watch(index)
 
     end
@@ -2491,8 +2512,8 @@ function PlayerStats(player)
 
     function self.init()
         local clock = os.clock()
-        local stat_count = 50
-        -- local stat_count = player.stat_count()
+        -- local stat_count = 50
+        local stat_count = player.stat_count()
         for i = 1, stat_count do
             on_update.task(function()
                 local item = HBoxContainer(0, 0, 0, 24)
@@ -2647,15 +2668,227 @@ function PlayerBuffs(player)
 
     self.on_items_ready = Signal()
     self.on_items_changed = Signal()
+    self.on_buff_check_changed = Signal()
 
     local buff_box = ScrollContainer(0, 0, 0, 0, self)
     local buff_list = VBoxContainer(0, 0, 0, 0, buff_box)
-    buff_list.set_resize_dir(ui_resize_dir.None)
+    buff_list.set_resize_dir(ui_resize_dir.Horizontal)
     buff_list.set_color(ui_color.Gray .. "22")
     buff_list.set_content_gutter_width(1)
 
+    local buff_dict = {}
+    local buff_node = {}
+    local buff_show = {}
+
     function self.init()
+        ---@param text string
+        ---@return unknown
+        local format_descr = function(text)
+            text = text:gsub("%[c%]%[([%u%d]+)%]", "<color=#%1>")
+            text = text:gsub("%[%-%]", "")
+            text = text:gsub("%[%/c%]", "</color>")
+            return text
+        end
+
+        on_redraw.action(function()
+            buff_dict = {}
+
+            local total = 0
+
+            for i = 0, player.buff_count() do
+                local name = player.buff_name(i)
+                if name ~= "Invalid" and name ~= "Stillness" then
+                    local data = buff_dict[name]
+                    if not data then
+                        total = total + 1
+                        data = {
+                            count = 0,
+                            descr = {},
+                            check = false
+                        }
+                    end
+
+                    data.count = data.count + 1
+                    data.descr[data.count] = {
+                        format_descr(player.buff_descr(i)),
+                        clock_value(player.buff_time(i))
+                    }
+
+                    buff_dict[name] = data
+                end
+            end
+
+
+            for key, value in pairs(buff_node) do
+                if not buff_dict[key] then
+                    value.set_visible(false)
+                else
+                    local show = buff_show[key]
+                    if show ~= nil then
+                        value.set_visible(show)
+                    else
+                        value.set_visible(true)
+                    end
+                end
+            end
+
+            local ready = 0
+
+            for key, value in pairs(buff_dict) do
+                local item = buff_node[key]
+
+                if not item then
+                    item = VBoxContainer(0, 0, 0, 0)
+                    item.set_color(ui_color.Black .. "ee")
+                    item.set_resize_dir(ui_resize_dir.Horizontal)
+                    item.set_content_offset(10, 4, 0, 8, 0)
+
+                    local topbar = HBoxContainer(0, 0, 0, 28)
+                    topbar.set_resize_dir(ui_resize_dir.Horizontal)
+                    topbar.set_content_offset(10, 0, 10, 0, 10)
+
+                    local title = Label()
+                    title.set_value(key)
+                    title.set_font_size(14)
+
+                    local check = CheckBox(0, 0, 24)
+                    check.set_resize_dir(ui_resize_dir.Vertical)
+
+                    check.on_toggled.action(function(toggled)
+                        value.check = toggled
+                        self.on_buff_check_changed.emit(key, toggled)
+                    end)
+
+                    topbar.add_child(title)
+                    topbar.add_child(check)
+
+                    local content = VBoxContainer(0, 0, 0, 0)
+                    content.set_resize_dir(ui_resize_dir.Horizontal)
+                    content.set_content_offset_left(40)
+
+                    item.add_child(topbar)
+                    item.add_child(content)
+
+                    buff_node[key] = item
+                    buff_list.add_child(item)
+                end
+
+                local content = item.get_child(2)
+                if content then
+                    for i, v in ipairs(value.descr) do
+                        local descr = v[1]
+                        local time = v[2]
+
+                        local info = content.get_child(i)
+                        if not info then
+                            info = Label()
+                            content.add_child(info)
+                        end
+
+                        local text = time
+                        if descr ~= "Invalid" then
+                            text = text .. "    " .. descr
+                        end
+
+                        info.set_value(text)
+                        content.set_min_size(0, i * 24)
+                        item.set_min_size(0, 40 + content.get_min_size_y())
+                    end
+                end
+
+                ready = ready + 1
+            end
+
+            self.on_items_changed.emit(ready, total)
+        end, 2)
     end
+
+    self.set_visible(true)
+    self.init()
+
+    local buffs_filter = Input(0, 0, 200, 28)
+    buffs_filter.set_resize_dir(ui_resize_dir.Node)
+    buffs_filter.set_bg_color(ui_color.Black)
+    buffs_filter.set_color(ui_color.White)
+    buffs_filter.set_placeholder("filter by description ...")
+    buffs_filter.set_font_size(12)
+
+    buffs_filter.on_value_changed.action(function(text)
+        if text == "" then
+            for key, value in pairs(buff_dict) do
+                buff_show[key] = true
+            end
+        else
+            --- validate pattern
+            if not pcall(string.find, "", text) then
+                return
+            end
+
+            for key, value in pairs(buff_dict) do
+                local found = false
+                for i, v in ipairs(value.descr) do
+                    if string.find(v[1], text) then
+                        found = true
+                        break
+                    end
+                end
+                buff_show[key] = found
+            end
+        end
+    end)
+
+    local buffs_header = self.get_header_box()
+    buffs_header.set_content_offset(0, 2, 0, 2, 10)
+    buffs_header.set_min_size(200, 0)
+    buffs_header.set_resize_dir(ui_resize_dir.Vertical)
+
+    buffs_header.add_child(buffs_filter)
+    buffs_header.set_visible(true)
+
+    local buffs_total = Label()
+    buffs_total.set_color(ui_color.DimGray)
+    buffs_total.set_align(ui_anchor.MiddleRight)
+
+
+    self.on_items_changed.action(function(ready, total)
+        buffs_total.set_value(total .. " / " .. ready)
+    end)
+
+    local buffs_check = Text()
+    buffs_check.set_mouse_filter(true)
+    buffs_check.set_align(ui_anchor.MiddleLeft)
+    buffs_check.set_normal_color(ui_color.DimGray)
+    buffs_check.set_hovered_color(ui_color.White)
+    buffs_check.set_pressed_color(ui_color.DimGray)
+    buffs_check.set_value("check  0")
+
+    local buffs_checked = 0
+    self.on_buff_check_changed.action(function(name, toggled)
+        if toggled then
+            buffs_checked = buffs_checked + 1
+        else
+            buffs_checked = buffs_checked - 1
+        end
+        buffs_check.set_value("check  " .. buffs_checked)
+    end)
+
+    buffs_check.on_pressed.action(function(pressed)
+        if pressed then
+            for _, value in pairs(buff_node) do
+                local check = value.get_child(1).get_child(2)
+                if check and check.is_pressed() then
+                    check.on_pressed.emit(true)
+                end
+            end
+        end
+    end)
+
+    local buffs_footer = self.get_footer_box()
+    buffs_footer.set_content_offset(10, 2, 10, 2, 20)
+
+    buffs_footer.add_child(buffs_total)
+    buffs_footer.add_child(buffs_check)
+
 
     return self
 end
@@ -2665,7 +2898,7 @@ end
 
 function ShroudOnMouseOver(id, type)
     -- if not mouse_button_left_pressed then
-        on_mouse_entered.emit(id, type)
+    on_mouse_entered.emit(id, type)
     -- end
 end
 
