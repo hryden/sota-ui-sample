@@ -2207,6 +2207,7 @@ function Player()
     self.on_relogin = Signal()
     self.on_combat_mode = Signal()
     self.on_stat_check_changed = Signal()
+    self.on_buff_check_changed = Signal()
 
     local nickname_ = ""
     local combat_mode_ = false
@@ -2237,9 +2238,9 @@ function Player()
     ---@type integer[]
     local stat_check_ = {}
 
-    local buff_count_ = 0
-    local buff_value_ = {}
-    ---@type string[]
+    local buff_data_ = {}
+    local buff_data_count_ = 0
+    local buff_data_ready_ = 0
     local buff_watch_ = {}
 
     local relogin_ = true
@@ -2287,41 +2288,27 @@ function Player()
         producer_xp_stored_ = producer_xp_
     end
 
-    function self.adventurer_xp() return adventurer_xp_ end
-
-    function self.adventurer_xp_att() return adventurer_xp_att_ end
-
-    function self.adventurer_xp_pooled() return adventurer_xp_pooled_ end
-
-    function self.adventurer_xp_gained()
-        local n = adventurer_xp_ - adventurer_xp_stored_
-        if n > 0 then
-            return n
-        end
-        return adventurer_xp_
+    function self.adventurer_xp()
+        return {
+            total    = adventurer_xp_,
+            level    = adventurer_xp_lvl_,
+            pooled   = adventurer_xp_pooled_,
+            gained   = adventurer_xp_ - adventurer_xp_stored_,
+            progress = adventurer_xp_progress_,
+            att      = adventurer_xp_att_
+        }
     end
 
-    function self.adventurer_xp_progress() return adventurer_xp_progress_ end
-
-    function self.adventurer_level() return adventurer_xp_lvl_ end
-
-    function self.producer_xp() return producer_xp_ end
-
-    function self.producer_xp_att() return producer_xp_att_ end
-
-    function self.producer_xp_pooled() return producer_xp_pooled_ end
-
-    function self.producer_xp_gained()
-        local n = producer_xp_ - producer_xp_stored_
-        if n > 0 then
-            return n
-        end
-        return producer_xp_
+    function self.producer_xp()
+        return {
+            total    = producer_xp_,
+            level    = producer_xp_lvl_,
+            pooled   = producer_xp_pooled_,
+            gained   = producer_xp_ - producer_xp_stored_,
+            progress = producer_xp_progress_,
+            att      = producer_xp_att_
+        }
     end
-
-    function self.producer_xp_progress() return producer_xp_progress_ end
-
-    function self.producer_level() return producer_xp_lvl_ end
 
     function self.stat_count()
         return stat_count_
@@ -2383,6 +2370,15 @@ function Player()
         return stat_check_
     end
 
+    ---@param text string
+    ---@return unknown
+    local format_buff_descr_ = function(text)
+        text = text:gsub("%[c%]%[([%u%d]+)%]", "<color=#%1>")
+        text = text:gsub("%[%-%]", "")
+        text = text:gsub("%[%/c%]", "</color>")
+        return text
+    end
+
     function self.buff_count()
         return get_player_buff_count()
     end
@@ -2399,8 +2395,21 @@ function Player()
         return get_player_buff_time(index)
     end
 
-    function self.buff_watch(index)
+    function self.buff_data()
+        return buff_data_
+    end
 
+    function self.buff_data_count()
+        return buff_data_count_
+    end
+
+    function self.buff_watch(key, value)
+        buff_watch_[key] = value
+        config_.set_value("buff_watch", buff_watch_)
+    end
+
+    function self.buff_check(key)
+        return buff_watch_[key]
     end
 
     function self.combat_mode()
@@ -2429,12 +2438,48 @@ function Player()
             self.on_combat_mode.emit(combat_mode)
         end
 
+        update_xp_()
+        config_.save()
+    end, 1)
+
+    --- Stats / Buffs
+    on_redraw.action(function ()
         for _, value in ipairs(stat_check_) do
             stat_value_[value] = get_player_stat_value(value)
         end
 
-        update_xp_()
-        config_.save()
+        --- reset
+        buff_data_ = {}
+        buff_data_count_ = 0
+
+        for i = 0, self.buff_count() do
+            local name = self.buff_name(i)
+            if name ~= "Invalid" and name ~= "Stillness" then
+                local data = buff_data_[name]
+                if not data then
+                    buff_data_count_ = buff_data_count_ + 1
+                    data = {
+                        count = 0,
+                        descr = {},
+                        check = false
+                    }
+                end
+
+                local time_left = self.buff_time(i)
+
+                data.count = data.count + 1
+                data.descr[data.count] = {
+                    description = format_buff_descr_(self.buff_descr(i)),
+                    time_string = clock_value(time_left),
+                    time_raw = time_left
+                }
+
+                buff_data_[name] = data
+                if buff_watch_[name] == nil then
+                    buff_watch_[name] = false
+                end
+            end
+        end
     end, 1)
 
     on_scene_loaded.action(function(_)
@@ -2459,7 +2504,6 @@ function Player()
                     stat_watch_[i] = false
                 end
                 config_.set_value("stat_watch", stat_watch_)
-                config_.save()
             else
                 local s = config_.get_value("stat_watch")
                 for i = 1, stat_count_ do
@@ -2472,6 +2516,12 @@ function Player()
                 end
             end
 
+            local buff_data = config_.get_value("buff_watch")
+            if not buff_data then
+                config_.set_value("buff_watch", {})
+            else
+                buff_watch_ = buff_data
+            end
 
             self.reset_xp()
 
@@ -2670,71 +2720,51 @@ function PlayerBuffs(player)
     self.on_items_changed = Signal()
     self.on_buff_check_changed = Signal()
 
+    ---@param text string
+    ---@return unknown
+    local format_descr = function(text)
+        text = text:gsub("%[c%]%[([%u%d]+)%]", "<color=#%1>")
+        text = text:gsub("%[%-%]", "")
+        text = text:gsub("%[%/c%]", "</color>")
+        return text
+    end
+
     local buff_box = ScrollContainer(0, 0, 0, 0, self)
     local buff_list = VBoxContainer(0, 0, 0, 0, buff_box)
     buff_list.set_resize_dir(ui_resize_dir.Horizontal)
     buff_list.set_color(ui_color.Gray .. "22")
     buff_list.set_content_gutter_width(1)
 
-    local buff_dict = {}
     local buff_node = {}
     local buff_show = {}
+    local buff_data = {}
+    local buff_count = 0
 
     function self.init()
-        ---@param text string
-        ---@return unknown
-        local format_descr = function(text)
-            text = text:gsub("%[c%]%[([%u%d]+)%]", "<color=#%1>")
-            text = text:gsub("%[%-%]", "")
-            text = text:gsub("%[%/c%]", "</color>")
-            return text
-        end
-
         on_redraw.action(function()
-            buff_dict = {}
+            buff_data = player.buff_data()
+            buff_count = player.buff_data_count()
 
-            local total = 0
-
-            for i = 0, player.buff_count() do
-                local name = player.buff_name(i)
-                if name ~= "Invalid" and name ~= "Stillness" then
-                    local data = buff_dict[name]
-                    if not data then
-                        total = total + 1
-                        data = {
-                            count = 0,
-                            descr = {},
-                            check = false
-                        }
-                    end
-
-                    data.count = data.count + 1
-                    data.descr[data.count] = {
-                        format_descr(player.buff_descr(i)),
-                        clock_value(player.buff_time(i))
-                    }
-
-                    buff_dict[name] = data
-                end
-            end
-
+            local buff_ready = 0
 
             for key, value in pairs(buff_node) do
-                if not buff_dict[key] then
+                if not buff_data[key] then
                     value.set_visible(false)
                 else
                     local show = buff_show[key]
                     if show ~= nil then
                         value.set_visible(show)
+                        if show then
+                            buff_ready = buff_ready + 1
+                        end
                     else
                         value.set_visible(true)
+                        buff_ready = buff_ready + 1
                     end
                 end
             end
 
-            local ready = 0
-
-            for key, value in pairs(buff_dict) do
+            for key, value in pairs(buff_data) do
                 local item = buff_node[key]
 
                 if not item then
@@ -2755,9 +2785,13 @@ function PlayerBuffs(player)
                     check.set_resize_dir(ui_resize_dir.Vertical)
 
                     check.on_toggled.action(function(toggled)
-                        value.check = toggled
+                        player.buff_watch(key, toggled)
                         self.on_buff_check_changed.emit(key, toggled)
                     end)
+
+                    if player.buff_check(key) then
+                        check.on_pressed.emit(true)
+                    end
 
                     topbar.add_child(title)
                     topbar.add_child(check)
@@ -2776,8 +2810,6 @@ function PlayerBuffs(player)
                 local content = item.get_child(2)
                 if content then
                     for i, v in ipairs(value.descr) do
-                        local descr = v[1]
-                        local time = v[2]
 
                         local info = content.get_child(i)
                         if not info then
@@ -2785,9 +2817,9 @@ function PlayerBuffs(player)
                             content.add_child(info)
                         end
 
-                        local text = time
-                        if descr ~= "Invalid" then
-                            text = text .. "    " .. descr
+                        local text = v.time_string
+                        if v.description ~= "Invalid" then
+                            text = text .. "    " .. v.description
                         end
 
                         info.set_value(text)
@@ -2796,10 +2828,10 @@ function PlayerBuffs(player)
                     end
                 end
 
-                ready = ready + 1
+                
             end
 
-            self.on_items_changed.emit(ready, total)
+            self.on_items_changed.emit(buff_ready, buff_count)
         end, 2)
     end
 
@@ -2815,7 +2847,7 @@ function PlayerBuffs(player)
 
     buffs_filter.on_value_changed.action(function(text)
         if text == "" then
-            for key, value in pairs(buff_dict) do
+            for key, value in pairs(buff_data) do
                 buff_show[key] = true
             end
         else
@@ -2824,10 +2856,10 @@ function PlayerBuffs(player)
                 return
             end
 
-            for key, value in pairs(buff_dict) do
+            for key, value in pairs(buff_data) do
                 local found = false
                 for i, v in ipairs(value.descr) do
-                    if string.find(v[1], text) then
+                    if string.find(v.description, text) then
                         found = true
                         break
                     end
@@ -2848,7 +2880,6 @@ function PlayerBuffs(player)
     local buffs_total = Label()
     buffs_total.set_color(ui_color.DimGray)
     buffs_total.set_align(ui_anchor.MiddleRight)
-
 
     self.on_items_changed.action(function(ready, total)
         buffs_total.set_value(total .. " / " .. ready)
@@ -3195,23 +3226,25 @@ local use_sample = function()
         producer_level.set_font_size(11)
 
         on_redraw.action(function()
-            local a_xp = player.adventurer_xp_gained()
-            local a_progress = math.floor(player.adventurer_xp_progress() * 100)
+            local adv_xp = player.adventurer_xp()
+            local adv_xp_gained = (adv_xp.gained > 0) and adv_xp.gained or adv_xp.total
+            local adv_xp_progress = math.floor(adv_xp.progress * 100)
 
-            local p_xp = player.producer_xp_gained()
-            local p_progress = math.floor(player.producer_xp_progress() * 100)
+            local prod_xp = player.producer_xp()
+            local prod_xp_gained = (prod_xp.gained > 0) and prod_xp.gained or prod_xp.total
+            local prod_xp_progress = math.floor(prod_xp.progress * 100)
 
             local color = "#ffffff"
-            if player.adventurer_xp_att() then
+            if adv_xp.att then
                 color = "#cd6155"
             end
 
-            adventurer_xp.set_value("<color=" .. color .. ">" .. comma_value(a_xp) .. "</color>")
-            adventurer_level.set_value("<b>" .. player.adventurer_level() .. "</b>:<size=9>" .. a_progress .. "%</size>")
+            adventurer_xp.set_value("<color=" .. color .. ">" .. comma_value(adv_xp_gained) .. "</color>")
+            adventurer_level.set_value("<b>" .. adv_xp.level .. "</b>:<size=9>" .. adv_xp_progress .. "%</size>")
 
             --- has no att
-            producer_xp.set_value(comma_value(p_xp))
-            producer_level.set_value("<b>" .. player.producer_level() .. "</b>:<size=9>" .. p_progress .. "%</size>")
+            producer_xp.set_value(comma_value(prod_xp_gained))
+            producer_level.set_value("<b>" .. prod_xp.level .. "</b>:<size=9>" .. prod_xp_progress .. "%</size>")
         end, 1)
 
         taskbar_center.add_child(adventurer_xp)
