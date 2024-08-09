@@ -657,26 +657,26 @@ function Thread()
     local task_ = {}
     local task_count_ = 0
 
-    local task_thread_ = coroutine.create(function()
-        while true do
-            task_[1].callable()
-            table.remove(task_, 1)
-            task_count_ = task_count_ - 1
-            coroutine.yield()
-        end
-    end)
-
     local action_ = {}
     local action_count_ = 0
     local action_index_ = 1
 
-    local action_thread_ = coroutine.create(function()
+    local thread_ = coroutine.create(function()
         while true do
-            action_[action_index_].callable()
-            action_index_ = action_index_ + 1
-            if action_index_ > action_count_ then
-                action_index_ = 1
+            if action_count_ > 0 then
+                action_[action_index_].callable()
+                action_index_ = action_index_ + 1
+                if action_index_ > action_count_ then
+                    action_index_ = 1
+                end
             end
+
+            if task_count_ > 0 then
+                task_[1].callable()
+                table.remove(task_, 1)
+                task_count_ = task_count_ - 1
+            end
+
             coroutine.yield()
         end
     end)
@@ -711,12 +711,11 @@ function Thread()
     end
 
     function self.resume()
-        if action_count_ > 0 and coroutine.status(action_thread_) == "suspended" then
-            coroutine.resume(action_thread_)
-        end
-
-        if task_count_ > 0 and coroutine.status(task_thread_) == "suspended" then
-            coroutine.resume(task_thread_)
+        if coroutine.status(thread_) == "suspended" then
+            local success, err = coroutine.resume(thread_)
+            if not success then
+                print(err, " -> ", debug.traceback(thread_))
+            end
         end
     end
 
@@ -1536,6 +1535,15 @@ function BoxContainer(pos_x, pos_y, size_x, size_y, vertical, parent_node)
     ---@class BoxContainer: Container
     local self = Container(pos_x, pos_y, size_x, size_y, parent_node)
     local vertical_ = vertical and true or false
+
+    --- TODO: optimization for large containers
+    --- check and resize only last child
+    --- or make block for bulk resort
+    ---
+    -- local resized_ = 0
+    -- self.on_content_size_changed.action(function (x, y)
+    --     resized_ = 0
+    -- end)
 
     self.on_sort_childs.action(function()
         self.set_silent(true)
@@ -2492,12 +2500,12 @@ function PlayerStats(player)
                 item.set_content_offset(10, 0, 10, 0, 10)
                 item.set_color(ui_color.Black .. "ee")
 
-                local item_index = Label(0, 0, 32, 0, tostring(i), 12, item)
+                local item_index = Label(0, 0, 32, 24, tostring(i), 12, item)
                 item_index.set_resize_dir(ui_resize_dir.Vertical)
 
-                local item_name = Label(0, 0, 0, 0, player.stat_name(i), 12, item)
+                local item_name = Label(0, 0, 0, 24, player.stat_name(i), 12, item)
 
-                local item_value = Label(0, 0, 120, 0, tostring(player.stat_value(i)), 12, item)
+                local item_value = Label(0, 0, 120, 24, tostring(player.stat_value(i)), 12, item)
                 item_value.set_resize_dir(ui_resize_dir.Vertical)
 
                 local item_check = CheckBox(0, 0, 24, item)
@@ -2564,20 +2572,16 @@ function PlayerStats(player)
 
     local stats_header = self.get_header_box()
     stats_header.set_content_offset(0, 2, 0, 2, 10)
-    stats_header.set_min_size(250, 0)
+    stats_header.set_min_size(200, 0)
     stats_header.set_resize_dir(ui_resize_dir.Vertical)
 
     local stats_total = Label()
     stats_total.set_color(ui_color.DimGray)
     stats_total.set_align(ui_anchor.MiddleRight)
 
-    local stats_visible = Label()
-    stats_visible.set_color(ui_color.DimGray)
-    stats_visible.set_align(ui_anchor.MiddleRight)
 
     self.on_items_changed.action(function(ready, total)
-        stats_total.set_value(total .. "  total")
-        stats_visible.set_value(ready)
+        stats_total.set_value(total .. " / " .. ready)
     end)
 
     local stats_check = Text()
@@ -2592,6 +2596,14 @@ function PlayerStats(player)
             local list = player.stat_check()
             local count = #list
             for i = 1, count do
+                local idx = list[1]
+                local item = stats_list.get_child(idx)
+                if item then
+                    local check = item.get_child(4)
+                    if check then
+                        check.on_pressed.emit(true)
+                    end
+                end
             end
         end
     end)
@@ -2603,9 +2615,8 @@ function PlayerStats(player)
     player.on_stat_check_changed.emit(#player.stat_check())
 
     local stats_footer = self.get_footer_box()
-    stats_footer.set_content_offset(0, 2, 0, 2, 40)
+    stats_footer.set_content_offset(10, 2, 10, 2, 20)
 
-    stats_header.add_child(stats_visible)
     stats_header.add_child(stats_filter)
     stats_header.set_visible(true)
 
@@ -2613,9 +2624,15 @@ function PlayerStats(player)
     stats_footer.add_child(stats_check)
 
     on_redraw.action(function(delta)
-        -- for _, v in ipairs(player.stat_check()) do
-        --     stat_list.set_item_value(v, 3, player.stat_value(v))
-        -- end
+        for _, i in ipairs(player.stat_check()) do
+            local item = stats_list.get_child(i)
+            if item then
+                local value = item.get_child(3)
+                if value then
+                    value.set_value(player.stat_value(i))
+                end
+            end
+        end
     end, 1)
 
     return self
@@ -2647,7 +2664,9 @@ end
 --- Main
 
 function ShroudOnMouseOver(id, type)
-    on_mouse_entered.emit(id, type)
+    -- if not mouse_button_left_pressed then
+        on_mouse_entered.emit(id, type)
+    -- end
 end
 
 function ShroudOnMouseOut(id, type)
@@ -2753,6 +2772,13 @@ function ShroudOnStart()
     ShroudUseLuaConsoleForPrint(true)
 
     on_update.action(function()
+        local s_x, s_y = get_screen_size_x(), get_screen_size_y()
+        if (screen_size_x ~= s_x) or (screen_size_y ~= s_y) then
+            on_screen_changed.emit()
+        end
+        screen_size_x = s_x
+        screen_size_y = s_y
+
         if is_key_pressed(key_code.MouseButtonLeft) then
             mouse_button_left_pressed = true
             on_mouse_pressed.emit()
@@ -2793,13 +2819,6 @@ function ShroudOnStart()
         end
         mouse_x = m_x
         mouse_y = m_y
-
-        local s_x, s_y = get_screen_size_x(), get_screen_size_y()
-        if (screen_size_x ~= s_x) or (screen_size_y ~= s_y) then
-            on_screen_changed.emit()
-        end
-        screen_size_x = s_x
-        screen_size_y = s_y
     end)
 
     ---@diagnostic enable: undefined-global
@@ -2883,6 +2902,8 @@ local use_sample = function()
         player_stats.on_items_changed.action(function(ready, total)
             progress_bar.set_value(ready / total)
         end)
+
+        -- stats_button.on_pressed.emit(true)
 
         local buffs_button = Button(0, 0, 40, 0, "Buffs", 12, taskbar_left)
         buffs_button.set_resize_dir(ui_resize_dir.Vertical)
