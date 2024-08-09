@@ -57,6 +57,8 @@ local ui_color = {
     Black = "#000000",
     White = "#ffffff",
     Buff = "#DAA06D",
+    Green = "#27E833",
+    Red = "#f9152f",
     Gray = "#303030",
     DarkGray = "#101010",
     DimGray = "#696969",
@@ -65,7 +67,8 @@ local ui_color = {
     BlueGray = "#7393B3",
     SteelBlue = "#4682B4",
     Gold = "#FFD700",
-    Oxblood = "#4A0404"
+    Oxblood = "#4A0404",
+    Error = "#cd6155"
 }
 
 ---@enum ui_texture
@@ -2443,7 +2446,7 @@ function Player()
     end, 1)
 
     --- Stats / Buffs
-    on_redraw.action(function ()
+    on_redraw.action(function()
         for _, value in ipairs(stat_check_) do
             stat_value_[value] = get_player_stat_value(value)
         end
@@ -2720,15 +2723,6 @@ function PlayerBuffs(player)
     self.on_items_changed = Signal()
     self.on_buff_check_changed = Signal()
 
-    ---@param text string
-    ---@return unknown
-    local format_descr = function(text)
-        text = text:gsub("%[c%]%[([%u%d]+)%]", "<color=#%1>")
-        text = text:gsub("%[%-%]", "")
-        text = text:gsub("%[%/c%]", "</color>")
-        return text
-    end
-
     local buff_box = ScrollContainer(0, 0, 0, 0, self)
     local buff_list = VBoxContainer(0, 0, 0, 0, buff_box)
     buff_list.set_resize_dir(ui_resize_dir.Horizontal)
@@ -2810,7 +2804,6 @@ function PlayerBuffs(player)
                 local content = item.get_child(2)
                 if content then
                     for i, v in ipairs(value.descr) do
-
                         local info = content.get_child(i)
                         if not info then
                             info = Label()
@@ -2827,16 +2820,11 @@ function PlayerBuffs(player)
                         item.set_min_size(0, 40 + content.get_min_size_y())
                     end
                 end
-
-                
             end
 
             self.on_items_changed.emit(buff_ready, buff_count)
         end, 2)
     end
-
-    self.set_visible(true)
-    self.init()
 
     local buffs_filter = Input(0, 0, 200, 28)
     buffs_filter.set_resize_dir(ui_resize_dir.Node)
@@ -3263,6 +3251,90 @@ local use_sample = function()
         on_redraw.action(function(delta)
             fps_value.set_value(math.floor(1 / delta) .. " fps")
         end, 0.5)
+
+        -----------------------------------
+        --- HUD
+
+        local notify = VBoxContainer(
+            screen_size_x * 0.7,
+            screen_size_y * 0.2,
+            screen_size_x * .3,
+            screen_size_y * 0.4
+        )
+
+        -- notify.set_color(ui_color.Black .. "44")
+        notify.set_content_offset(20, 10, 20, 10, 0)
+        notify.set_visible(false)
+
+        player.on_combat_mode.action(function(enabled)
+            notify.set_visible(enabled)
+        end)
+
+        on_screen_changed.action(function ()
+            notify.set_position(
+                screen_size_x * 0.7,
+                screen_size_y * 0.2
+            )
+
+            notify.set_size(
+                screen_size_x * .3,
+                screen_size_y * 0.4
+            )
+        end)
+
+        on_redraw.action(function()
+            if notify.is_visible then
+                for i = 1, notify.get_child_count() do
+                    notify.get_child(1).destroy()
+                end
+
+                local stats_notify = VBoxContainer()
+                notify.add_child(stats_notify)
+
+                local h = 32
+
+                for _, index in ipairs(player.stat_check()) do
+                    local item = Label(0, 0, 0, h)
+                    item.set_font_size(14)
+                    item.set_resize_dir(ui_resize_dir.Horizontal)
+                    item.set_value(player.stat_name(index) .. ": " .. math.floor(player.stat_value(index)))
+
+                    stats_notify.add_child(item)
+                end
+
+                local buffs_notify = VBoxContainer()
+                notify.add_child(buffs_notify)
+
+                for key, value in pairs(player.buff_data()) do
+                    if player.buff_check(key) then
+                        local item = Label(0, 0, 0, h)
+                        item.set_font_size(14)
+                        item.set_color(ui_color.Green)
+                        item.set_resize_dir(ui_resize_dir.Horizontal)
+
+                        local time_left
+                        local time_left_string
+                        for i, v in ipairs(value.descr) do
+                            if i == 1 then
+                                time_left = v.time_raw
+                                time_left_string = v.time_string
+                            elseif v.time_raw < time_left then
+                                time_left = v.time_raw
+                                time_left_string = v.time_string
+                            end
+                        end
+
+                        if time_left <= 10 then
+                            item.set_color(ui_color.Red)
+                        end
+
+                        item.set_value(time_left_string .. " " .. key)
+
+                        buffs_notify.add_child(item)
+                    end
+                end
+            end
+        end, 1)
     end)
 end
 
