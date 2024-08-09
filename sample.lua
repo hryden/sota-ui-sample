@@ -180,6 +180,9 @@ local ui_show_object
 ---@type fun(id: integer, type: ui_type): boolean
 local ui_hide_object
 
+---@type fun(id: integer, type: ui_type, value: boolean): boolean
+local ui_raycast_object
+
 ---------------------------------------
 --- UI Pre-made scripts
 
@@ -1426,6 +1429,7 @@ function Panel(pos_x, pos_y, size_x, size_y, parent_node)
     ---@class Panel: Image
     local self = Image(pos_x, pos_y, size_x, size_y, nil, parent_node)
 
+    ui_raycast_object(self.id(), self.type(), false)
     ui_unset_object_mouse_filter(self.id(), self.type())
     self.set_color(ui_color.Black .. "ee")
     return self
@@ -2972,6 +2976,7 @@ function ShroudOnStart()
     ui_set_object_opacity = ShroudSetTransparency
     ui_show_object = ShroudShowObject
     ui_hide_object = ShroudHideObject
+    ui_raycast_object = ShroudRaycastObject
     ui_set_object_draggable = ShroudSetDragguable
     ui_unset_object_draggable = ShroudUnsetDragguable
     ui_set_object_resizable = ShroudSetResizable
