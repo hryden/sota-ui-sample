@@ -1909,6 +1909,7 @@ function Label(pos_x, pos_y, size_x, size_y, text_value, font_size, parent_node)
     ---@class Label: Text
     local self = Text(pos_x, pos_y, size_x, size_y, text_value, font_size, parent_node)
 
+    ui_raycast_object(self.id(), self.type(), false)
     ui_unset_object_mouse_filter(self.id(), self.type())
     return self
 end
@@ -2424,6 +2425,7 @@ function Player()
     end
 
     function self.reset_stats()
+        stat_check_ = {}
         stat_count_ = get_player_stat_count()
 
         for i = 1, stat_count_ do
@@ -3187,6 +3189,12 @@ local use_sample = function()
             buffs_button.on_pressed.emit(true)
         end)
 
+        local notify_button = Button(0, 0, 40, 0, "Notify", 12, taskbar_left)
+        notify_button.set_resize_dir(ui_resize_dir.Vertical)
+        notify_button.set_hovered_color(ui_color.DimGray)
+        notify_button.set_pressed_color(ui_color.Gray)
+        notify_button.set_toggle_mode(true)
+
         -----------------------------------
         --- Center
 
@@ -3201,7 +3209,7 @@ local use_sample = function()
             scene_time = os.clock()
         end)
 
-        local stopwatch_value = os.time()
+        local stopwatch_value = os.clock()
         on_redraw.action(function()
             local t = os.clock()
             stopwatch.set_text_value(
@@ -3272,33 +3280,34 @@ local use_sample = function()
         -----------------------------------
         --- HUD
 
-        local notify = Label(
-            screen_size_x * 0.7,
+        local notify = VBoxContainer(
+            screen_size_x * 0.75,
             screen_size_y * 0.2,
-            screen_size_x * .3,
-            screen_size_y * 0.4
+            screen_size_x * 0.25,
+            screen_size_y * 0.3
         )
 
-        notify.set_align(ui_anchor.UpperLeft)
+        notify.set_content_offset(10, 10, 10, 10, 0)
         notify.set_visible(false)
 
-        player.on_combat_mode.action(function(enabled)
+        notify_button.on_toggled.action(function(enabled)
             notify.set_visible(enabled)
         end)
 
         on_screen_changed.action(function()
             notify.set_position(
-                screen_size_x * 0.7,
+                screen_size_x * 0.75,
                 screen_size_y * 0.2
             )
 
             notify.set_size(
-                screen_size_x * .3,
-                screen_size_y * 0.4
+                screen_size_x * 0.25,
+                screen_size_y * 0.3
             )
         end)
 
-
+        local notify_value = Label(0, 0, 0, 0, "", 12, notify)
+        notify_value.set_align(ui_anchor.UpperLeft)
 
         on_redraw.action(function()
             if notify.is_visible then
@@ -3311,12 +3320,14 @@ local use_sample = function()
                 end
 
                 text = text .. indent .. "<size=14>"
+                local notify_color = "#000000ee"
 
                 for key, value in pairs(player.buff_data()) do
                     if player.buff_check(key) then
 
                         local time_left
                         local time_left_string
+                        local buff_alias = string.gsub(key, "RunePotion_", "")
                         for i, v in ipairs(value.descr) do
                             if i == 1 then
                                 time_left = v.time_raw
@@ -3327,19 +3338,23 @@ local use_sample = function()
                             end
                         end
 
-                        local color = ui_color.Green
+                        local color = "#7CC26E"
 
                         if time_left <= 10 then
-                            color = ui_color.Red
+                            color = ui_color.Error
+                            if player.combat_mode() then
+                                notify_color = "#D6B04988"
+                            end
                         end
 
-                        text = text .. "<size=16><b><color=" .. color .. ">" .. time_left_string .. "</color></b></size> " .. key .. "\n"
+                        text = text .. "<size=16><b><color=" .. color .. ">" .. time_left_string .. "</color></b></size> " .. buff_alias .. "\n"
                     end
                 end
 
                 text = text .. "</size>"
 
-                notify.set_value(text)
+                notify_value.set_value(text)
+                notify.set_color(notify_color)
             end
         end, 1)
     end)
