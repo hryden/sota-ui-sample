@@ -3109,7 +3109,7 @@ local use_sample = function()
         taskbar_left.set_color(ui_color.None)
         taskbar_left.set_content_gutter_width(10)
 
-        local taskbar_center = HBoxContainer(0, 0, 400, 0, taskbar)
+        local taskbar_center = HBoxContainer(0, 0, 480, 0, taskbar)
         taskbar_center.set_resize_dir(ui_resize_dir.Vertical)
         taskbar_center.set_color(ui_color.None)
 
@@ -3190,19 +3190,27 @@ local use_sample = function()
         -----------------------------------
         --- Center
 
-        local stopwatch = Button(0, 0, 80)
+        local stopwatch = Button(0, 0, 160)
         stopwatch.set_resize_dir(ui_resize_dir.Vertical)
-        stopwatch.set_text_value("00:00:00")
+        stopwatch.set_text_value("00:00:00  <color=#808080>00:00:00</color>")
         stopwatch.set_font_size(16)
         stopwatch.set_font_bold(true)
 
+        local scene_time = os.clock()
+        on_scene_loaded.action(function(_)
+            scene_time = os.clock()
+        end)
+
         local stopwatch_value = os.time()
         on_redraw.action(function()
-            stopwatch.set_text_value(clock_value(os.time() - stopwatch_value))
+            local t = os.clock()
+            stopwatch.set_text_value(
+                clock_value(t - stopwatch_value) .. "  <color=#808080>" .. clock_value(t - scene_time) .. "</color>"
+            )
         end, 1)
 
         stopwatch.on_pressed.action(function()
-            stopwatch_value = os.time()
+            stopwatch_value = os.clock()
             player.reset_xp()
         end)
 
