@@ -2740,6 +2740,10 @@ function PlayerBuffs(player)
 
     function self.init()
         on_redraw.action(function()
+            if not self.is_visible() then
+                return
+            end
+
             buff_data = player.buff_data()
             buff_count = player.buff_data_count()
 
@@ -3260,22 +3264,21 @@ local use_sample = function()
         -----------------------------------
         --- HUD
 
-        local notify = VBoxContainer(
+        local notify = Label(
             screen_size_x * 0.7,
             screen_size_y * 0.2,
             screen_size_x * .3,
             screen_size_y * 0.4
         )
 
-        -- notify.set_color(ui_color.Black .. "44")
-        notify.set_content_offset(20, 10, 20, 10, 0)
+        notify.set_align(ui_anchor.UpperLeft)
         notify.set_visible(false)
 
         player.on_combat_mode.action(function(enabled)
             notify.set_visible(enabled)
         end)
 
-        on_screen_changed.action(function ()
+        on_screen_changed.action(function()
             notify.set_position(
                 screen_size_x * 0.7,
                 screen_size_y * 0.2
@@ -3287,35 +3290,22 @@ local use_sample = function()
             )
         end)
 
+
+
         on_redraw.action(function()
             if notify.is_visible then
-                for i = 1, notify.get_child_count() do
-                    notify.get_child(1).destroy()
-                end
-
-                local stats_notify = VBoxContainer()
-                notify.add_child(stats_notify)
-
-                local h = 32
+                local text = ""
+                local indent = ""
 
                 for _, index in ipairs(player.stat_check()) do
-                    local item = Label(0, 0, 0, h)
-                    item.set_font_size(14)
-                    item.set_resize_dir(ui_resize_dir.Horizontal)
-                    item.set_value(player.stat_name(index) .. ": " .. math.floor(player.stat_value(index)))
-
-                    stats_notify.add_child(item)
+                    text = text .. player.stat_name(index) .. ": <b>" .. math.floor(player.stat_value(index)) .. "</b>\n"
+                    indent = "\n\n"
                 end
 
-                local buffs_notify = VBoxContainer()
-                notify.add_child(buffs_notify)
+                text = text .. indent .. "<size=14>"
 
                 for key, value in pairs(player.buff_data()) do
                     if player.buff_check(key) then
-                        local item = Label(0, 0, 0, h)
-                        item.set_font_size(14)
-                        item.set_color(ui_color.Green)
-                        item.set_resize_dir(ui_resize_dir.Horizontal)
 
                         local time_left
                         local time_left_string
@@ -3329,15 +3319,19 @@ local use_sample = function()
                             end
                         end
 
+                        local color = ui_color.Green
+
                         if time_left <= 10 then
-                            item.set_color(ui_color.Red)
+                            color = ui_color.Red
                         end
 
-                        item.set_value(time_left_string .. " " .. key)
-
-                        buffs_notify.add_child(item)
+                        text = text .. "<size=16><b><color=" .. color .. ">" .. time_left_string .. "</color></b></size> " .. key .. "\n"
                     end
                 end
+
+                text = text .. "</size>"
+
+                notify.set_value(text)
             end
         end, 1)
     end)
