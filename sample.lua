@@ -2951,6 +2951,19 @@ function ShroudOnLogout()
     on_logout.emit()
 end
 
+local gold = 0
+local crowns = 0
+ShroudPlayerGold = 0
+
+function ShroudOnConsoleInput(type, player, msg)
+    if type == "Loot" then
+        local num = string.match(msg, ".*%(Crown of the Obsidians x([%d]+)%)")
+        if num then
+            crowns = crowns + tonumber(num)
+        end
+    end
+end
+
 ShroudDeltaTime = 0
 
 function ShroudOnUpdate()
@@ -3220,6 +3233,8 @@ local use_sample = function()
         stopwatch.on_pressed.action(function()
             stopwatch_value = os.clock()
             player.reset_xp()
+            crowns = 0
+            gold = ShroudPlayerGold
         end)
 
         local adventurer_xp = Label()
@@ -3310,12 +3325,12 @@ local use_sample = function()
 
         on_redraw.action(function()
             if notify.is_visible then
-                local text = ""
+                local text = "<color=#808080>COTO:</color> <b>" .. crowns .. "</b>\n<color=#808080>GOLD:</color> <b>" .. comma_value(ShroudPlayerGold - gold) .. "</b>\n\n"
                 local indent = ""
 
                 for _, index in ipairs(player.stat_check()) do
                     text = text .. player.stat_name(index) .. ": <b>" .. math.floor(player.stat_value(index)) .. "</b>\n"
-                    indent = "\n\n"
+                    indent = "\n"
                 end
 
                 text = text .. indent .. "<size=14>"
