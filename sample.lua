@@ -3281,10 +3281,10 @@ local use_sample = function()
         --- HUD
 
         local notify = VBoxContainer(
-            screen_size_x * 0.75,
-            screen_size_y * 0.2,
-            screen_size_x * 0.25,
-            screen_size_y * 0.3
+            screen_size_x - 500,
+            100,
+            300,
+            200
         )
 
         notify.set_content_offset(10, 10, 10, 10, 0)
@@ -3296,13 +3296,12 @@ local use_sample = function()
 
         on_screen_changed.action(function()
             notify.set_position(
-                screen_size_x * 0.75,
-                screen_size_y * 0.2
+                screen_size_x - 500,
+                100
             )
 
             notify.set_size(
-                screen_size_x * 0.25,
-                screen_size_y * 0.3
+                300, 200
             )
         end)
 
