@@ -2611,7 +2611,7 @@ function PlayerStats(player)
     end
 
     local stats_filter = Input(0, 0, 200, 28)
-    stats_filter.set_resize_dir(ui_resize_dir.Node)
+    stats_filter.set_resize_dir(ui_resize_dir.None)
     stats_filter.set_bg_color(ui_color.Black)
     stats_filter.set_color(ui_color.White)
     stats_filter.set_placeholder("filter by name ...")
@@ -2837,7 +2837,7 @@ function PlayerBuffs(player)
     end
 
     local buffs_filter = Input(0, 0, 200, 28)
-    buffs_filter.set_resize_dir(ui_resize_dir.Node)
+    buffs_filter.set_resize_dir(ui_resize_dir.None)
     buffs_filter.set_bg_color(ui_color.Black)
     buffs_filter.set_color(ui_color.White)
     buffs_filter.set_placeholder("filter by description ...")
