@@ -284,6 +284,9 @@ local is_key_released
 -------------------------------------------
 ---- Player
 
+---@return integer
+local get_player_gold = function() return ShroudPlayerGold end
+
 ---@type fun(): string
 local get_player_name
 
@@ -743,6 +746,7 @@ local on_scene_loaded = Event()
 local on_scene_unloaded = Event()
 
 local on_input_change = Event()
+local on_loot_message = Signal()
 
 local on_logout = Event()
 
@@ -2251,6 +2255,9 @@ function Player()
     local buff_data_ready_ = 0
     local buff_watch_ = {}
 
+    local coto_ = 0
+    local gold_ = 0
+
     local relogin_ = true
 
     local xp_ = { 0 }
@@ -2440,6 +2447,21 @@ function Player()
         store_xp_()
     end
 
+    function self.coto()
+        return coto_
+    end
+
+    function self.gold()
+        return gold_
+    end
+
+    on_loot_message.action(function(msg)
+        local coto = string.match(msg, ".*%(Crown of the Obsidians x([%d]+)%)")
+        if coto then
+            coto = coto + tonumber(coto)
+        end
+    end)
+
     on_redraw.action(function()
         local combat_mode = get_player_combat_mode()
         if combat_mode ~= combat_mode_ then
@@ -2453,6 +2475,8 @@ function Player()
 
     --- Stats / Buffs
     on_redraw.action(function()
+        gold_ = get_player_gold()
+
         for _, value in ipairs(stat_check_) do
             stat_value_[value] = get_player_stat_value(value)
         end
@@ -2951,20 +2975,14 @@ function ShroudOnLogout()
     on_logout.emit()
 end
 
-local gold = 0
-local crowns = 0
-ShroudPlayerGold = 0
-
 function ShroudOnConsoleInput(type, player, msg)
     if type == "Loot" then
-        local num = string.match(msg, ".*%(Crown of the Obsidians x([%d]+)%)")
-        if num then
-            crowns = crowns + tonumber(num)
-        end
+        on_loot_message.emit(msg)
     end
 end
 
 ShroudDeltaTime = 0
+ShroudPlayerGold = 0
 
 function ShroudOnUpdate()
     on_redraw.emit(ShroudDeltaTime)
@@ -3223,6 +3241,8 @@ local use_sample = function()
         end)
 
         local stopwatch_value = os.clock()
+        local player_gold_value = player.gold()
+
         on_redraw.action(function()
             local t = os.clock()
             stopwatch.set_text_value(
@@ -3233,8 +3253,7 @@ local use_sample = function()
         stopwatch.on_pressed.action(function()
             stopwatch_value = os.clock()
             player.reset_xp()
-            crowns = 0
-            gold = ShroudPlayerGold
+            player_gold_value = player.gold()
         end)
 
         local adventurer_xp = Label()
@@ -3295,12 +3314,7 @@ local use_sample = function()
         -----------------------------------
         --- HUD
 
-        local notify = VBoxContainer(
-            screen_size_x - 500,
-            100,
-            300,
-            200
-        )
+        local notify = VBoxContainer(screen_size_x - 500, 100, 300, 200)
 
         notify.set_content_offset(10, 10, 10, 10, 0)
         notify.set_visible(false)
@@ -3310,14 +3324,8 @@ local use_sample = function()
         end)
 
         on_screen_changed.action(function()
-            notify.set_position(
-                screen_size_x - 500,
-                100
-            )
-
-            notify.set_size(
-                300, 200
-            )
+            notify.set_position(screen_size_x - 500, 100)
+            notify.set_size(300, 200)
         end)
 
         local notify_value = Label(0, 0, 0, 0, "", 12, notify)
@@ -3325,7 +3333,10 @@ local use_sample = function()
 
         on_redraw.action(function()
             if notify.is_visible then
-                local text = "<color=#808080>COTO:</color> <b>" .. crowns .. "</b>\n<color=#808080>GOLD:</color> <b>" .. comma_value(ShroudPlayerGold - gold) .. "</b>\n\n"
+                local text = "<color=#808080>COTO:</color> <b>"
+                    .. player.coto() .. "</b>\n<color=#808080>GOLD:</color> <b>"
+                    .. comma_value(player_gold_value - player.gold()) .. "</b>\n\n"
+
                 local indent = ""
 
                 for _, index in ipairs(player.stat_check()) do
@@ -3338,7 +3349,6 @@ local use_sample = function()
 
                 for key, value in pairs(player.buff_data()) do
                     if player.buff_check(key) then
-
                         local time_left
                         local time_left_string
                         local buff_alias = string.gsub(key, "RunePotion_", "")
@@ -3357,11 +3367,13 @@ local use_sample = function()
                         if time_left <= 10 then
                             color = ui_color.Error
                             if player.combat_mode() then
-                                notify_color = "#D6B04988"
+                                notify_color = "#FF8635"
                             end
                         end
 
-                        text = text .. "<size=16><b><color=" .. color .. ">" .. time_left_string .. "</color></b></size> " .. buff_alias .. "\n"
+                        text = text ..
+                            "<size=16><b><color=" ..
+                            color .. ">" .. time_left_string .. "</color></b></size> " .. buff_alias .. "\n"
                     end
                 end
 
@@ -3374,6 +3386,5 @@ local use_sample = function()
     end)
 end
 
---- comment, if you don't want to use
 -- use_test()
 use_sample()
