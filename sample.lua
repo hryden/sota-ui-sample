@@ -3311,9 +3311,10 @@ local use_sample = function()
         -----------------------------------
         --- HUD
 
-        local notify = VBoxContainer(screen_size_x - 500, 100, 300, 0)
+        local notify = HBoxContainer(screen_size_x - 500, 100, 300, 0)
+        notify.set_color("#000000ee")
 
-        notify.set_content_offset(10, 10, 10, 10, 0)
+        notify.set_content_offset(0, 0, 0, 0, 20)
         notify.set_visible(false)
 
         notify_button.on_toggled.action(function(enabled)
@@ -3324,13 +3325,17 @@ local use_sample = function()
             notify.set_position(screen_size_x - 500, 100)
         end)
 
+        local notify_highlight = Spacer(notify)
+        notify_highlight.set_min_size(10, 0)
+        notify_highlight.set_resize_dir(ui_resize_dir.Vertical)
+
         local notify_value = Label(0, 0, 0, 0, "", 12, notify)
         notify_value.set_align(ui_anchor.UpperLeft)
 
         on_redraw.action(function()
             if notify.is_visible then
                 
-                local text = "<color=#808080>COTO:</color> <b>"
+                local text = "\n<color=#808080>COTO:</color> <b>"
                     .. player_coto_value .. "</b>\n<color=#808080>GOLD:</color> <b>"
                     .. comma_value(player.gold() - player_gold_value) .. "</b>\n\n"
 
@@ -3344,7 +3349,7 @@ local use_sample = function()
                 end
 
                 text = text .. indent .. "<size=14>"
-                local notify_color = "#000000ee"
+                local notify_color = ui_color.None
 
                 for key, value in pairs(player.buff_data()) do
                     if player.buff_check(key) then
@@ -3362,11 +3367,11 @@ local use_sample = function()
                         end
 
                         local color = "#7CC26E"
-
+                        
                         if time_left <= 10 then
                             color = ui_color.Error
                             if player.combat_mode() then
-                                notify_color = "#FCE70022"
+                                notify_color = "#FCE70066"
                             end
                         end
 
@@ -3381,8 +3386,12 @@ local use_sample = function()
                 text = text .. "</size>"
 
                 notify_value.set_value(text)
-                notify.set_color(notify_color)
-                notify.set_size_y(rows * 18)
+                notify.set_size_y(rows * 19)
+
+                if notify_highlight.get_color() ~= notify_color then
+                    notify_highlight.set_color(notify_color)
+                end
+
             end
         end, 1)
     end)
