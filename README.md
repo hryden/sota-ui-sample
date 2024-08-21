@@ -18,7 +18,6 @@
 #### 8. Notify (will change)
 - show gold and coto gained during the timer period
 - show checked stats and buffs
-- **this is a temporary solution now. if you need to see more stats and buffs you need to increase the size of the panel in the code**
 
 
 

@@ -2255,7 +2255,6 @@ function Player()
     local buff_data_ready_ = 0
     local buff_watch_ = {}
 
-    local coto_ = 0
     local gold_ = 0
 
     local relogin_ = true
@@ -2447,20 +2446,9 @@ function Player()
         store_xp_()
     end
 
-    function self.coto()
-        return coto_
-    end
-
     function self.gold()
         return gold_
     end
-
-    on_loot_message.action(function(msg)
-        local coto = string.match(msg, ".*%(Crown of the Obsidians x([%d]+)%)")
-        if coto then
-            coto = coto + tonumber(coto)
-        end
-    end)
 
     on_redraw.action(function()
         local combat_mode = get_player_combat_mode()
@@ -3242,6 +3230,14 @@ local use_sample = function()
 
         local stopwatch_value = os.clock()
         local player_gold_value = player.gold()
+        local player_coto_value = 0
+
+        on_loot_message.action(function(msg)
+            local coto = string.match(msg, ".*%(Crown of the Obsidians x([%d]+)%)")
+            if coto then
+                player_coto_value = player_coto_value + tonumber(coto)
+            end
+        end)
 
         on_redraw.action(function()
             local t = os.clock()
@@ -3252,8 +3248,9 @@ local use_sample = function()
 
         stopwatch.on_pressed.action(function()
             stopwatch_value = os.clock()
-            player.reset_xp()
             player_gold_value = player.gold()
+            player_coto_value = 0
+            player.reset_xp()
         end)
 
         local adventurer_xp = Label()
@@ -3314,7 +3311,7 @@ local use_sample = function()
         -----------------------------------
         --- HUD
 
-        local notify = VBoxContainer(screen_size_x - 500, 100, 300, 200)
+        local notify = VBoxContainer(screen_size_x - 500, 100, 300, 0)
 
         notify.set_content_offset(10, 10, 10, 10, 0)
         notify.set_visible(false)
@@ -3325,7 +3322,6 @@ local use_sample = function()
 
         on_screen_changed.action(function()
             notify.set_position(screen_size_x - 500, 100)
-            notify.set_size(300, 200)
         end)
 
         local notify_value = Label(0, 0, 0, 0, "", 12, notify)
@@ -3333,15 +3329,18 @@ local use_sample = function()
 
         on_redraw.action(function()
             if notify.is_visible then
+                
                 local text = "<color=#808080>COTO:</color> <b>"
-                    .. player.coto() .. "</b>\n<color=#808080>GOLD:</color> <b>"
-                    .. comma_value(player_gold_value - player.gold()) .. "</b>\n\n"
+                    .. player_coto_value .. "</b>\n<color=#808080>GOLD:</color> <b>"
+                    .. comma_value(player.gold() - player_gold_value) .. "</b>\n\n"
 
                 local indent = ""
+                local rows = 4
 
                 for _, index in ipairs(player.stat_check()) do
                     text = text .. player.stat_name(index) .. ": <b>" .. math.floor(player.stat_value(index)) .. "</b>\n"
                     indent = "\n"
+                    rows = rows + 1
                 end
 
                 text = text .. indent .. "<size=14>"
@@ -3367,13 +3366,15 @@ local use_sample = function()
                         if time_left <= 10 then
                             color = ui_color.Error
                             if player.combat_mode() then
-                                notify_color = "#FF8635"
+                                notify_color = "#FCE70022"
                             end
                         end
 
                         text = text ..
                             "<size=16><b><color=" ..
                             color .. ">" .. time_left_string .. "</color></b></size> " .. buff_alias .. "\n"
+                        
+                        rows = rows + 1
                     end
                 end
 
@@ -3381,6 +3382,7 @@ local use_sample = function()
 
                 notify_value.set_value(text)
                 notify.set_color(notify_color)
+                notify.set_size_y(rows * 18)
             end
         end, 1)
     end)
