@@ -3389,4 +3389,20 @@ local use_sample = function()
 end
 
 -- use_test()
-use_sample()
+-- use_sample()
+
+on_update.task(function()
+    local button = Button()
+    button.set_size(200, 50)
+    button.set_position(200, 200)
+    
+    button.set_text_value("Button")
+    button.set_font_size(24)
+    button.set_normal_color(ui_color.Black)
+    button.set_hovered_color(ui_color.DimGray)
+    button.set_pressed_color(ui_color.Oxblood)
+
+    button.on_pressed.action(function (pressed)
+        print(pressed and "Button pressed" or "Button released")
+    end)
+end)
