@@ -19,7 +19,27 @@
 - show gold and coto gained during the timer period
 - show checked stats and buffs
 
+## HOWTO
+- If you don't like the sample you can make your own user interface.
+- Comment last line `-- use_sample()`
+- And add your stuff
+```lua
+on_update.task(function()
+    local button = Button()
+    button.set_size(200, 50)
+    button.set_position(200, 200)
+    
+    button.set_text_value("Button")
+    button.set_font_size(24)
+    button.set_normal_color(ui_color.Black)
+    button.set_hovered_color(ui_color.DimGray)
+    button.set_pressed_color(ui_color.Oxblood)
 
+    button.on_pressed.action(function (pressed)
+        print(pressed and "Button pressed" or "Button released")
+    end)
+end)
+```
 
 ## TODO
 - Containers min_size
