@@ -68,6 +68,7 @@ local ui_color = {
     SteelBlue = "#4682B4",
     Gold = "#FFD700",
     Oxblood = "#4A0404",
+    Yellow = "#FCE700",
     Error = "#cd6155"
 }
 
@@ -246,14 +247,20 @@ local ui_set_input_readonly
 ---------------------------------------
 --- Screen
 
-local screen_size_x = 0
-local screen_size_y = 0
+local screen_size_x = 1
+local screen_size_y = 1
 
 ---@type fun(): integer
 local get_screen_size_x
 
 ---@type fun(): integer
 local get_screen_size_y
+
+---@return number x
+---@return number y
+local get_screen_center = function()
+    return screen_size_x / 2, screen_size_y / 2
+end
 
 -------------------------------------------
 ---- Mouse and Keyboard
@@ -339,16 +346,23 @@ local get_player_buff_descr
 local get_player_buff_time
 
 -------------------------------------------
+--- Scene
+
+---@type fun(): string
+local get_scene_name
+
+-------------------------------------------
 --- Utils
 
 ---@generic T
 ---@param n number
 ---@param v T
+---@param e? boolean -- empty table
 ---@return T[]
-local array = function(n, v)
+local array = function(n, v, e)
     local a = {}
     for i = 1, n do
-        a[i] = v
+        a[i] = e and {} or v
     end
     return a
 end
@@ -421,6 +435,9 @@ end
 ---@field null fun(): unknown Returns a special value which is a representation of a null in a json
 ---@diagnostic disable-next-line: undefined-global
 local json = json
+
+---@class Config
+local config
 
 function Config()
     ---@class Config
@@ -747,6 +764,7 @@ local on_scene_unloaded = Event()
 
 local on_input_change = Event()
 local on_loot_message = Signal()
+local on_system_message = Signal()
 
 local on_logout = Event()
 
@@ -1833,11 +1851,40 @@ function Window(pos_x, pos_y, size_x, size_y, title)
     resize_.set_pressed_color(ui_color.DimGray)
     resize_.set_mouse_filter(true)
 
-    self.on_resizing = Signal()
+    local name_ = ""
+    local resizable_ = ui_resize_dir.Both
+
+    self.on_moved = Signal()
+    self.on_resized = Signal()
     self.on_close = Signal()
 
     self.set_title = title_.set_value
     self.get_title = title_.get_value
+
+    ---@param name string
+    function self.set_name(name)
+        if name == "" then
+            return
+        end
+
+        name_ = name
+        if not config.get_value("windows") then
+            config.set_value("windows", {})
+        end
+
+        local rect = config.get_value("windows")[name]
+        if rect then
+            self.set_position(rect.x, rect.y)
+            self.set_size(rect.w, rect.h)
+        else
+            config.get_value("windows")[name] = {
+                x = self.get_pos_x(),
+                y = self.get_pos_y(),
+                w = self.get_size_x(),
+                h = self.get_size_y()
+            }
+        end
+    end
 
     function self.get_header_box()
         return header_box_
@@ -1847,12 +1894,35 @@ function Window(pos_x, pos_y, size_x, size_y, title)
         return footer_box_
     end
 
+    function self.move_to_center()
+        local w, h = self.get_size()
+        local x, y = get_screen_center()
+        self.set_position(x - w / 2, y - h / 2)
+    end
+
+    ---@param value ui_resize_dir
+    function self.set_resizable(value)
+        resizable_ = value
+        resize_.set_visible(resizable_ ~= ui_resize_dir.None)
+    end
+
     title_.on_dragging.action(function()
         local x, y = self.get_position()
         self.set_position(
             x + (mouse_x_spd * mouse_x_dir),
             y + (mouse_y_spd * mouse_y_dir)
         )
+    end)
+
+    title_.on_pressed.action(function(pressed)
+        if not pressed then
+            local x, y = self.get_position()
+            local data = config.get_value("windows")
+            data[name_].x = x
+            data[name_].y = y
+            config.set_value("windows", data)
+            self.on_moved.emit(x, y)
+        end
     end)
 
     close_.on_pressed.action(function(pressed)
@@ -1867,9 +1937,16 @@ function Window(pos_x, pos_y, size_x, size_y, title)
     resize_.on_dragging.action(function()
         local x, y = self.get_size()
         local min_x, min_y = self.get_min_size()
-        local w = x + (mouse_x_spd * mouse_x_dir)
-        local h = y + (mouse_y_spd * mouse_y_dir)
-        self.set_size(math.max(min_x, w), math.max(min_y, h))
+
+        if resizable_ == ui_resize_dir.Both or resizable_ == ui_resize_dir.Horizontal then
+            local w = x + (mouse_x_spd * mouse_x_dir)
+            self.set_size_x(math.max(min_x, w))
+        end
+
+        if resizable_ == ui_resize_dir.Both or resizable_ == ui_resize_dir.Vertical then
+            local h = y + (mouse_y_spd * mouse_y_dir)
+            self.set_size_y(math.max(min_y, h))
+        end
     end)
 
     resize_.on_pressed.action(function(pressed)
@@ -1877,6 +1954,12 @@ function Window(pos_x, pos_y, size_x, size_y, title)
             if content_child_ then
                 content_child_.set_size(content_.get_min_size())
             end
+            local w, h = self.get_size()
+            local data = config.get_value("windows")
+            data[name_].w = w
+            data[name_].h = h
+            config.set_value("windows", data)
+            self.on_resized.emit(w, h)
         end
     end)
 
@@ -2213,8 +2296,6 @@ end
 function Player()
     ---@class Player
     local self = {}
-    local config_ = Config()
-    config_.load("sample.json")
 
     self.on_relogin = Signal()
     self.on_combat_mode = Signal()
@@ -2368,7 +2449,7 @@ function Player()
                 table.insert(stat_check_, index)
                 self.on_stat_check_changed.emit(#stat_check_)
             end
-            config_.set_value("stat_watch", stat_watch_)
+            config.set_value("stat_watch", stat_watch_)
         end
     end
 
@@ -2419,7 +2500,7 @@ function Player()
 
     function self.buff_watch(key, value)
         buff_watch_[key] = value
-        config_.set_value("buff_watch", buff_watch_)
+        config.set_value("buff_watch", buff_watch_)
     end
 
     function self.buff_check(key)
@@ -2458,7 +2539,6 @@ function Player()
         end
 
         update_xp_()
-        config_.save()
     end, 1)
 
     --- Stats / Buffs
@@ -2508,7 +2588,7 @@ function Player()
     end)
 
     on_logout.action(function()
-        config_.save()
+        config.save()
     end)
 
     self.on_relogin.action(function()
@@ -2519,14 +2599,18 @@ function Player()
 
             self.reset_stats()
 
-            config_.name(name)
-            if not config_.get_value("stat_watch") then
+            config.name(name)
+            if not config.get_value("windows") then
+                config.set_value("windows", {})
+            end
+
+            if not config.get_value("stat_watch") then
                 for i = 1, stat_count_ do
                     stat_watch_[i] = false
                 end
-                config_.set_value("stat_watch", stat_watch_)
+                config.set_value("stat_watch", stat_watch_)
             else
-                local s = config_.get_value("stat_watch")
+                local s = config.get_value("stat_watch")
                 for i = 1, stat_count_ do
                     local watch = s[i]
                     stat_watch_[i] = watch
@@ -2537,9 +2621,9 @@ function Player()
                 end
             end
 
-            local buff_data = config_.get_value("buff_watch")
+            local buff_data = config.get_value("buff_watch")
             if not buff_data then
-                config_.set_value("buff_watch", {})
+                config.set_value("buff_watch", {})
             else
                 buff_watch_ = buff_data
             end
@@ -2568,7 +2652,8 @@ end
 ---@param player Player
 function PlayerStats(player)
     ---@class PlayerStats: Window
-    local self = Window(500, 100, 500, 200, "Stats")
+    local self = Window(300, 100, 500, 200, "Stats")
+    self.set_name("PlayerStats")
     self.set_visible(false)
     self.set_size_y(400)
 
@@ -2733,7 +2818,8 @@ end
 ---@param player Player
 function PlayerBuffs(player)
     ---@class PlayerBuffs: Window
-    local self = Window(500, 100, 500, 200, "Buffs")
+    local self = Window(400, 150, 500, 200, "Buffs")
+    self.set_name("PlayerBuffs")
     self.set_visible(false)
     self.set_size_y(400)
 
@@ -2934,6 +3020,336 @@ function PlayerBuffs(player)
     return self
 end
 
+function Astronomy()
+    ---@class Astronomy
+    local self = {}
+
+    local astro_epoch_ = os.time({
+        year = 1997,
+        month = 9,
+        day = 2,
+        hour = 0,
+        min = 0,
+        sec = 0
+    })
+
+    local lost_vale_epoch_ = os.time({
+        year = 2018,
+        month = 2,
+        day = 23,
+        hour = 13,
+        min = 0,
+        sec = 0
+    })
+
+    local lost_vale_open_ = false
+    local lost_vale_time_ = 0
+
+    local hour_secs_ = 60 * 60
+    -- two weeks, one in-game year
+    local fortnight_secs_ = hour_secs_ * 24 * 14
+
+    local constellation_zone_ = 1.0 / 12
+    local constellation_rate_ = 1.0 / fortnight_secs_
+
+    local town_idx_ = {
+        "Kiln",
+        "Northwood",
+        "Jaanaford",
+        "Point West",
+        "Brookside",
+        "Etceter",
+        "Unknown",
+        "Resolute",
+        "Ardoris",
+        "Aerie",
+        "Eastmarch",
+        "Fortus End"
+    }
+
+    local town_len_ = #town_idx_
+
+    local town_virtue_ = {
+        "Honor",
+        "Sacrifice",
+        "Justice",
+        "Valor",
+        "Compassion",
+        "Honesty",
+        "Ethos",
+        "Courage",
+        "Love",
+        "Truth",
+        "Humility",
+        "Spirituality"
+    }
+
+    local cabalist_idx_ = {
+        "Dolus",
+        "Temna",
+        "Nefario",
+        "Nefas",
+        "Avara",
+        "Indigno",
+        "Corpus",
+        "Fastus"
+    }
+
+    local cabalist_len_ = #cabalist_idx_
+
+    local cabalist_pos_ = array(cabalist_len_, { 6, 0 })
+
+    local cabalist_color_ = {
+
+    }
+
+    local cabalist_period_ = {
+        19 * hour_secs_,
+        17 * hour_secs_,
+        13 * hour_secs_,
+        11 * hour_secs_,
+        3 * hour_secs_,
+        2 * hour_secs_,
+        23 * hour_secs_,
+        29 * hour_secs_
+    }
+
+    local cabalist_zone_ = {
+        -- Dolus
+        constellation_zone_ / (1.0 / cabalist_period_[1] - constellation_rate_),
+        -- Temna
+        constellation_zone_ / (1.0 / cabalist_period_[2] - constellation_rate_),
+        -- Nefario
+        constellation_zone_ / (1.0 / cabalist_period_[3] - constellation_rate_),
+        -- Nefas
+        constellation_zone_ / (1.0 / cabalist_period_[4] - constellation_rate_),
+        -- Avara
+        constellation_zone_ / (1.0 / cabalist_period_[5] - constellation_rate_),
+        -- Indigno
+        constellation_zone_ / (1.0 / cabalist_period_[6] - constellation_rate_),
+        -- Corpus
+        constellation_zone_ / (1.0 / cabalist_period_[7] - constellation_rate_),
+        -- Fastus
+        constellation_zone_ / (1.0 / cabalist_period_[8] - constellation_rate_)
+    }
+
+    function self.get_town_names()
+        return town_idx_
+    end
+
+    function self.get_cabalist_names()
+        return cabalist_idx_
+    end
+
+    function self.get_cabalist_data()
+        return cabalist_pos_
+    end
+
+    function self.get_lost_vale_data()
+        return lost_vale_open_, lost_vale_time_
+    end
+
+    on_redraw.action(function()
+        local secs = os.time() - astro_epoch_
+        local orbit = (secs % fortnight_secs_) / fortnight_secs_
+
+        for i = 1, cabalist_len_ do
+            local period = cabalist_period_[i]
+            local planet_orbit = (secs % period) / period
+
+            -- 0.0, 12.0
+            local delta = planet_orbit - orbit
+            if delta < 0 then
+                delta = 1.0 + delta
+            end
+            local zone_phase = town_len_ * delta
+
+            local virtue, part = math.modf(zone_phase)
+
+            local zone = cabalist_zone_[i]
+            local remain = math.ceil(zone - part * zone)
+
+            cabalist_pos_[i] = { virtue + 1, remain }
+        end
+
+        secs  = os.time() - lost_vale_epoch_
+        local win = secs % (28 * hour_secs_)
+        local seg = win % (11 * hour_secs_);
+
+        if seg < hour_secs_ then
+            lost_vale_open_ = true
+            lost_vale_time_ = seg - hour_secs_
+        elseif win < (22 * hour_secs_) then
+            lost_vale_time_ = 11 * hour_secs_ - seg
+            lost_vale_open_ = false
+        else
+            lost_vale_time_ = 6 * hour_secs_ - seg
+            lost_vale_open_ = false
+        end
+
+    end, 1)
+
+    return self
+end
+
+function Cabalists()
+    ---@class Cabalists: Window
+    local self = Window(500, 200, 400, 320, "Cabalists")
+    self.set_resizable(ui_resize_dir.Horizontal)
+    self.set_name("Cabalists")
+    self.set_visible(false)
+
+    local astro_ = Astronomy()
+    local town_names_ = astro_.get_town_names()
+    local cabalist_names_ = astro_.get_cabalist_names()
+
+    local list_ = VBoxContainer(0, 0, 0, 0, self)
+    -- buff_list.set_resize_dir(ui_resize_dir.Horizontal)
+    list_.set_color(ui_color.Gray .. "22")
+    list_.set_content_gutter_width(1)
+
+    ---@type Label[]
+    local town_list_ = {}
+
+    ---@type Label[]
+    local time_list_ = {}
+
+    for index, value in ipairs(cabalist_names_) do
+        local item = HBoxContainer(0, 0, 0, 32, list_)
+        item.set_resize_dir(ui_resize_dir.Horizontal)
+        item.set_content_offset(20, 0, 20, 0, 10)
+        item.set_color(ui_color.Black .. "ee")
+
+        local name = Label(0, 0, 80, 32, value, 12, item)
+        name.set_resize_dir(ui_resize_dir.Vertical)
+
+        local town = Label(0, 0, 140, 32, "", 12, item)
+        town.set_resize_dir(ui_resize_dir.Vertical)
+        table.insert(town_list_, town)
+
+        local time = Label(0, 0, 80, 32, "", 12, item)
+        time.set_align(ui_anchor.MiddleCenter)
+        -- time.set_resize_dir(ui_resize_dir.Vertical)
+        table.insert(time_list_, time)
+    end
+
+    local footer_ = self.get_footer_box()
+    local siege_progress_ = Label(0, 0, 0, 0, "Engineers 0 / 0 / 0", 12, footer_)
+    siege_progress_.set_align(ui_anchor.MiddleCenter)
+    siege_progress_.set_visible(false)
+
+    local lost_vale_ = Label(0, 0, 0, 0, "Lost Vale  <color=#606060>00:00:00</color>", 12, footer_)
+    lost_vale_.set_align(ui_anchor.MiddleCenter)
+
+    local scene = ""
+    local siege_engineers_ = {0, 0, 0}
+
+    on_redraw.action(function()
+        local town = array(12, {}, true)
+        local data = astro_.get_cabalist_data()
+        for index, value in ipairs(cabalist_names_) do
+            list_.get_child(index).set_color(ui_color.Black .. "ee")
+
+            local town_index = data[index][1]
+            local town_index_next = town_index + 1
+            if town_index_next > 12 then
+                town_index_next = 1
+            end
+
+            local item_town = town_list_[index]
+            item_town.set_value(town_names_[town_index] ..
+                "  <color=#888888>" .. town_names_[town_index_next] .. "</color>")
+
+            local item_time = time_list_[index]
+            item_time.set_value(clock_value(data[index][2]))
+
+            local town_data = town[town_index]
+            table.insert(town_data, index)
+        end
+
+        local color = {
+            ui_color.Blue .. "05",
+            ui_color.Green .. "05",
+            ui_color.Yellow .. "05",
+            ui_color.Oxblood .. "44"
+        }
+
+        local color_index = 0
+
+        for i = 1, 12 do
+            local town_data = town[i]
+            local len = #town_data
+            local highlight = false
+            if len > 1 then
+                color_index = color_index + 1
+                highlight = true
+            end
+
+            if highlight then
+                for _, index in ipairs(town_data) do
+                    list_.get_child(index).set_color(color[color_index])
+                end
+            end
+        end
+
+        scene = get_scene_name()
+        if scene == "Hills Siege" or scene == "Forest Siege" then
+            siege_progress_.set_visible(true)
+            local a, b, c = table.unpack(siege_engineers_)
+            local done = (a + b + c) == 18
+            siege_progress_.set_value(
+                "<color=" .. (done and ui_color.Green or "#aaaaaa") ..
+                ">Engineers  " ..
+                siege_engineers_[1] .. " / " ..
+                siege_engineers_[2] .. " / " ..
+                siege_engineers_[3] .. "</color>"
+            )
+        else
+            siege_progress_.set_visible(false)
+            siege_engineers_ = {0, 0, 0}
+        end
+
+        local lost_vale_open, lost_vale_time = astro_.get_lost_vale_data()
+        lost_vale_.set_value("Lost Vale  " .. clock_value(lost_vale_time))
+        lost_vale_.set_color(lost_vale_open and ui_color.Green or "#aaaaaa")
+    end, 1)
+
+    on_system_message.action(function(msg)
+        if self.is_visible() then
+            local a, b, c
+            if scene == "Hills Siege" then
+                a, b, c = "Upper", "Central", "Lower"
+            elseif scene == "Forest Siege" then
+                a, b, c = "First", "Second", "Third"
+            else
+                return
+            end
+
+            if a and b and c then
+                local num = string.match(msg, ".*Siege Engineer %(" .. a .. " Catapult%) defeated (%d) of 6 enemies%!")
+                if num then
+                    siege_engineers_[1] = num
+                    return
+                end
+                num = string.match(msg, ".*Siege Engineer %(" .. b .. " Catapult%) defeated (%d) of 6 enemies%!")
+
+                if num then
+                    siege_engineers_[2] = num
+                    return
+                end
+
+                num = string.match(msg, ".*Siege Engineer %(" .. c .. " Catapult%) defeated (%d) of 6 enemies%!")
+                if num then
+                    siege_engineers_[3] = num
+                    return
+                end
+            end
+        end
+    end)
+
+    return self
+end
+
 -------------------------------------------
 --- Main
 
@@ -2966,6 +3382,8 @@ end
 function ShroudOnConsoleInput(type, player, msg)
     if type == "Loot" then
         on_loot_message.emit(msg)
+    elseif type == "System" then
+        on_system_message.emit(msg)
     end
 end
 
@@ -3051,7 +3469,12 @@ function ShroudOnStart()
     get_player_buff_descr = ShroudGetBuffDescription
     get_player_buff_time = ShroudGetBuffTimeRemaining
 
+    get_scene_name = ShroudGetCurrentSceneName
+
     ShroudUseLuaConsoleForPrint(true)
+
+    config = Config()
+    config.load("sample.json")
 
     on_update.action(function()
         local s_x, s_y = get_screen_size_x(), get_screen_size_y()
@@ -3101,6 +3524,8 @@ function ShroudOnStart()
         end
         mouse_x = m_x
         mouse_y = m_y
+
+        config.save()
     end)
 
     ---@diagnostic enable: undefined-global
@@ -3110,8 +3535,8 @@ local use_test = function()
     on_update.task(function()
         local player = Player()
 
-        local player_buffs = PlayerBuffs(player)
-        player_buffs.set_visible(true)
+        local cabalists = Cabalists()
+        cabalists.set_visible(true)
     end)
 end
 
@@ -3213,6 +3638,22 @@ local use_sample = function()
         notify_button.set_hovered_color(ui_color.DimGray)
         notify_button.set_pressed_color(ui_color.Gray)
         notify_button.set_toggle_mode(true)
+
+        local cabalists = Cabalists()
+
+        local cabalists_button = Button(0, 0, 60, 0, "Cabalists", 12, taskbar_left)
+        cabalists_button.set_resize_dir(ui_resize_dir.Vertical)
+        cabalists_button.set_hovered_color(ui_color.DimGray)
+        cabalists_button.set_pressed_color(ui_color.Gray)
+        cabalists_button.set_toggle_mode(true)
+
+        cabalists_button.on_toggled.action(function(pressed)
+            cabalists.set_visible(pressed)
+        end)
+
+        cabalists.on_close.action(function()
+            cabalists_button.on_pressed.emit(true)
+        end)
 
         -----------------------------------
         --- Center
@@ -3334,7 +3775,6 @@ local use_sample = function()
 
         on_redraw.action(function()
             if notify.is_visible then
-                
                 local text = "\n<color=#808080>COTO:</color> <b>"
                     .. player_coto_value .. "</b>\n<color=#808080>GOLD:</color> <b>"
                     .. comma_value(player.gold() - player_gold_value) .. "</b>\n\n"
@@ -3367,7 +3807,7 @@ local use_sample = function()
                         end
 
                         local color = "#7CC26E"
-                        
+
                         if time_left <= 10 then
                             color = ui_color.Error
                             if player.combat_mode() then
@@ -3378,7 +3818,7 @@ local use_sample = function()
                         text = text ..
                             "<size=16><b><color=" ..
                             color .. ">" .. time_left_string .. "</color></b></size> " .. buff_alias .. "\n"
-                        
+
                         rows = rows + 1
                     end
                 end
@@ -3391,7 +3831,6 @@ local use_sample = function()
                 if notify_highlight.get_color() ~= notify_color then
                     notify_highlight.set_color(notify_color)
                 end
-
             end
         end, 1)
     end)

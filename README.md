@@ -19,7 +19,11 @@
 - show gold and coto gained during the timer period
 - show checked stats and buffs
 
-## HOWTO
+## Install
+- Download Release
+- Unzip, then move sample.lua and sample.png files to the SOTA Lua folder
+
+## Custom
 - If you don't like the sample you can make your own user interface.
 - Comment last line `-- use_sample()`
 - And add your stuff
